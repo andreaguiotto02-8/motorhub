@@ -93,7 +93,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='1.3';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='1.4';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -382,8 +382,27 @@ function renderSlip(hd,app){
   (!d?'<div class="banner">Busta non ancora letta. La pianificata la legge in serata e i dati compaiono qui.</div>':
    (d.highlights&&d.highlights.length?`<div class="grid2">${d.highlights.map(h=>`<div class="card"><div class="v">${esc(h.value)}</div><div class="l">${esc(h.label)}</div></div>`).join('')}</div>`:'')+
    (d.problems&&d.problems.length?`<div class="banner">${d.problems.map(x=>'⚠ '+esc(x)).join('<br>')}</div>`:'')+
+   slipCompare(p,d)+
    (d.sections||[]).map((sc,si)=>`<div class="sec"><h3>${esc(sc.title)}</h3>${(sc.items||[]).map((it,ii)=>`<div class="it"><span class="l">${esc(it.label)}${it.note?`<br><small>${esc(it.note)}</small>`:''}</span><b>${esc(it.value)}</b><span class="rp" title="Segnala errore" onclick="reportSlip('${p.id}',${si},${ii})">⚠</span></div>`).join('')}</div>`).join('')+
    `<button style="width:100%" onclick="reportCtx('Busta ${p.id} (${p.ym}) / in generale')">⚠ Segnala un errore in questa busta</button>`);
+}
+// confronto tra ore in busta e ore calcolate dall'app con gli orari segnati
+function slipCompare(p,d){
+  const c=d.compare;if(!c)return '';
+  const days=Object.keys(hoursData.days).filter(x=>x.startsWith(p.ym)),ot=calcOT();
+  if(!days.length)return `<div class="banner">Confronto ore: non hai segnato orari per questo mese.</div>`;
+  const appTot=days.reduce((a,x)=>a+dayMin(hoursData.days[x]),0),appOt=days.reduce((a,x)=>a+ot[x],0);
+  const [Y,M]=p.ym.split('-').map(Number);let miss=0;
+  for(let i=1;i<=new Date(Y,M,0).getDate();i++){const g=new Date(Y,M-1,i).getDay(),k=p.ym+'-'+String(i).padStart(2,'0');if(g>0&&g<6&&!hoursData.days[k])miss++}
+  const hm=h=>Math.round(h*60);
+  const row=(label,app,h)=>{
+    if(h==null)return `<div class="it"><span class="l">${label}<br><small>App ${fmt(app)} · Busta non indicato</small></span><b>—</b></div>`;
+    const diff=app-hm(h),ok=Math.abs(diff)<=15;
+    return `<div class="it"><span class="l">${label}<br><small>App ${fmt(app)} · Busta ${fmt(hm(h))}</small></span><b style="color:${ok?'var(--ok)':'var(--acc)'}">${ok?'✓ Torna':'Δ '+(diff>0?'+':'')+fmt(diff)}</b></div>`;
+  };
+  const busta=(c.ordinarie==null&&c.straordinarie==null)?null:(c.ordinarie||0)+(c.straordinarie||0);
+  return `<div class="sec"><h3>Confronto con i tuoi orari</h3>${row('Ore lavorate (ordinarie + straordinarie)',appTot,busta)}${row('Straordinari',appOt,c.straordinarie==null?null:c.straordinarie)}
+  <div class="it"><span class="l"><small>${c.altre_pagate>0?'In busta ci sono anche '+fmt(hm(c.altre_pagate))+' di ore pagate non lavorate (ferie, permessi, festività): non confrontate. ':''}Giorni feriali senza orario segnato nell'app: ${miss}.${c.note?' '+esc(c.note):''}</small></span><span class="rp" title="Segnala errore" onclick="reportCtx('Busta ${p.id} (${p.ym}) / Confronto ore')">⚠</span></div></div>`;
 }
 async function openSlip(){const f=await dbGet('slip:'+view.id);if(!f)return toast('PDF non trovato su questo telefono');const u=URL.createObjectURL(f);window.open(u,'_blank')||(location.href=u)}
 async function delSlip(){
