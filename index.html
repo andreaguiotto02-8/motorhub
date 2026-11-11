@@ -16,6 +16,7 @@ header{position:sticky;top:0;z-index:5;background:var(--bg);padding:12px 14px 8p
 .top{display:flex;align-items:center;gap:10px}
 h1{font-size:20px;margin:0;flex:1}
 h1 b{color:var(--acc)}
+h1 .v{font-size:11px;font-weight:400;color:var(--mut);margin-left:6px}
 button{font:inherit;color:var(--txt);background:var(--card2);border:0;border-radius:12px;padding:12px 16px;cursor:pointer}
 button.p{background:var(--acc);color:#111;font-weight:700}
 button.d{color:var(--red)}
@@ -93,7 +94,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='1.6';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='1.7';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -219,7 +220,7 @@ function render(){
 
 function renderList(hd,app){
   const brands=[...new Set(motors.map(m=>m.brand).filter(Boolean))].sort();
-  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b></h1><button class="s" onclick="go('menu')">⋯</button></div>${tabs('list')}
+  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b><small class="v">v${APPV}</small></h1><button class="s" onclick="go('menu')">⋯</button></div>${tabs('list')}
   <input id="q" type="search" placeholder="Cerca motore, marca o procedura…" value="${esc(q)}">
   <div class="chips"><div class="chip ${brandF?'':'on'}" onclick="setBrand('')">Tutti</div>${brands.map(b=>`<div class="chip ${brandF===b?'on':''}" onclick="setBrand('${esc(b)}')">${esc(b)}</div>`).join('')}</div>`;
   $('q').oninput=e=>{q=e.target.value;list()};
@@ -313,7 +314,7 @@ function renderHours(hd,app){
   const ym=view.ym||today().slice(0,7),[Y,M]=ym.split('-').map(Number);
   const key=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
   const label=new Date(Y,M-1,1).toLocaleDateString('it-IT',{month:'long',year:'numeric'});
-  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b></h1><button class="s" onclick="go('menu')">⋯</button></div>${tabs('hours')}`;
+  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b><small class="v">v${APPV}</small></h1><button class="s" onclick="go('menu')">⋯</button></div>${tabs('hours')}`;
   const ot=calcOT(),all=Object.keys(hoursData.days);
   const days=all.filter(d=>d.startsWith(ym)).sort().reverse();
   const tot=days.reduce((a,d)=>a+dayMin(hoursData.days[d]),0),otm=days.reduce((a,d)=>a+ot[d],0);
@@ -366,7 +367,7 @@ async function delDay(){
 // ---------- Buste paga ----------
 const monthLabel=ym=>new Date(ym+'-01T12:00:00').toLocaleDateString('it-IT',{month:'long',year:'numeric'});
 function renderSlips(hd,app){
-  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b></h1><button class="s" onclick="go('menu')">⋯</button></div>${tabs('slips')}`;
+  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b><small class="v">v${APPV}</small></h1><button class="s" onclick="go('menu')">⋯</button></div>${tabs('slips')}`;
   const l=[...payslips].sort((a,b)=>b.ym.localeCompare(a.ym));
   app.innerHTML=(l.map(p=>{const d=slipData[p.id];return `<div class="item" onclick="go('slip',{id:'${p.id}'})"><div class="m" style="text-transform:capitalize">${monthLabel(p.ym)}</div>
    ${d?(d.highlights||[]).map(h=>`<span class="tag">${esc(h.label)}: <b>${esc(h.value)}</b></span>`).join(''):'<span class="tag">in attesa di lettura</span>'}</div>`}).join('')||'<div class="empty">Nessuna busta paga.<br>Premi “+ Busta” per caricarla.</div>')+`<button class="p fab" onclick="go('addSlip')">+ Busta</button>`;
@@ -461,7 +462,7 @@ function renderMenu(hd,app){
   <button class="p" style="width:100%" onclick="exportData()">Esporta dati</button>
   <button style="width:100%;margin-top:10px" onclick="$('imp').click()">Importa dati</button>
   <input type="file" id="imp" accept="application/json" hidden>
-  <p class="note" style="margin-top:24px">MotorHub · si aggiorna da solo a ogni avvio</p>`;
+  <p class="note" style="margin-top:24px">MotorHub v${APPV} · si aggiorna da solo a ogni avvio</p>`;
   $('imp').onchange=async e=>{
     const f=e.target.files[0];if(!f)return;
     try{const d=JSON.parse(await f.text());if(!Array.isArray(d.motors))throw 0;
