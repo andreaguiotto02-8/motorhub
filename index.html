@@ -93,13 +93,13 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='1.4';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='1.5';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
 
 // ---------- Orari di lavoro ----------
-let hoursData={weeklyHours:40,days:{}};   // days: {'2026-11-11':{in:'07:30',out:'16:30',lunch:60}}
+let hoursData={weeklyHours:40,dailyHours:8,localHolidays:['11-11'],days:{}};   // days: {'2026-11-11':{in:'07:30',out:'16:30',lunch:60}}
 let payslips=[],slipData={},reports=[];   // buste: {id,ym,name}; dati letti dalla pianificata; segnalazioni di errore
 const saveSlips=async()=>{await dbSet('payslips',payslips);schedulePush()};
 const saveReports=async()=>{await dbSet('reports',reports);schedulePush()};
@@ -110,15 +110,23 @@ const toMin=t=>{if(!t)return 0;const [h,m]=t.split(':').map(Number);return h*60+
 const dayMin=d=>d&&d.in&&d.out?Math.max(0,toMin(d.out)-toMin(d.in)-(+d.lunch||0)):0;
 const fmt=m=>{const s=m<0?'-':'';m=Math.abs(Math.round(m));return s+Math.floor(m/60)+':'+String(m%60).padStart(2,'0')};
 const monday=ds=>{const d=new Date(ds+'T12:00:00');d.setDate(d.getDate()-((d.getDay()+6)%7));return d.toISOString().slice(0,10)};
-// straordinario assegnato al giorno in cui si supera il limite settimanale (lun-dom)
-function calcOT(){
-  const lim=(+hoursData.weeklyHours||40)*60,ot={},cum={};
-  Object.keys(hoursData.days).sort().forEach(ds=>{
-    const w=monday(ds),b=cum[w]||0,a=b+dayMin(hoursData.days[ds]);cum[w]=a;
-    ot[ds]=Math.max(0,a-lim)-Math.max(0,b-lim);
-  });
-  return ot;
+// Regola: lun-ven prime N ore (default 8) ordinarie, il resto straordinario; sabato tutto straordinario;
+// domeniche e festività (nazionali + locali) conteggiate a parte come "festive"
+function easterMon(y){const a=y%19,b=Math.floor(y/100),c=y%100,d=Math.floor(b/4),e=b%4,f=Math.floor((b+8)/25),g=Math.floor((b-f+1)/3),h=(19*a+b-d-g+15)%30,i=Math.floor(c/4),k=c%4,l=(32+2*e+2*i-h-k)%7,m=Math.floor((a+11*h+22*l)/451),mo=Math.floor((h+l-7*m+114)/31),da=((h+l-7*m+114)%31)+1;const x=new Date(y,mo-1,da+1,12);return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0')}
+const _hc={};
+function holidays(y){
+  if(_hc[y+JSON.stringify(hoursData.localHolidays)])return _hc[y+JSON.stringify(hoursData.localHolidays)];
+  const set=new Set(['01-01','01-06','04-25','05-01','06-02','08-15','11-01','12-08','12-25','12-26',...(hoursData.localHolidays||[])].map(x=>y+'-'+x));
+  set.add(easterMon(y));return _hc[y+JSON.stringify(hoursData.localHolidays)]=set;
 }
+function isFest(ds){const d=new Date(ds+'T12:00:00');return d.getDay()===0||holidays(d.getFullYear()).has(ds)}
+function dayCalc(ds){
+  const w=dayMin(hoursData.days[ds]),lim=(+hoursData.dailyHours||8)*60;
+  if(isFest(ds))return{ord:0,ot:0,fest:w,tot:w};
+  if(new Date(ds+'T12:00:00').getDay()===6)return{ord:0,ot:w,fest:0,tot:w};
+  return{ord:Math.min(w,lim),ot:Math.max(0,w-lim),fest:0,tot:w};
+}
+function calcOT(){const ot={};Object.keys(hoursData.days).forEach(ds=>ot[ds]=dayCalc(ds).ot);return ot}
 
 // ---------- Registro d'uso ----------
 function log(type,info){
@@ -317,12 +325,20 @@ function renderHours(hd,app){
   <div class="grid"><div class="card"><div class="v">${fmt(dayMin(hoursData.days[td]))}</div><div class="l">Oggi</div></div>
   <div class="card"><div class="v">${fmt(tot)}</div><div class="l">Ore del mese</div></div>
   <div class="card ot"><div class="v">${fmt(otm)}</div><div class="l">Straord. mese</div></div></div>
-  ${Object.keys(weeks).sort().reverse().map(w=>`<div class="wk"><span>Settimana dal ${w.slice(8)}/${w.slice(5,7)}</span><span>${fmt(wsum(w,d=>dayMin(hoursData.days[d])))} · straord. <b>${fmt(wsum(w,d=>ot[d]))}</b></span></div>`+weeks[w].map(d=>{const x=hoursData.days[d];return `<div class="day" onclick="go('editDay',{date:'${d}'})"><div class="dd">${+d.slice(8)}<small>${wd(d)}</small></div><div class="tt">${x.in} – ${x.out}<br>pausa ${x.lunch||0} min</div><div class="hh">${fmt(dayMin(x))}${ot[d]>0?`<small>+${fmt(ot[d])} straord.</small>`:''}</div></div>`}).join('')).join('')||'<div class="empty">Nessun giorno segnato in questo mese.</div>'}
-  <h2>Contratto</h2><label>Ore settimanali (oltre queste è straordinario)</label>
-  <div class="row"><input id="wh" type="number" step="0.5" min="1" value="${esc(hoursData.weeklyHours)}"><button onclick="saveWeekly()">Salva</button></div>
+  <p class="note" style="margin:0 2px 6px">Ordinarie ${fmt(days.reduce((a,d)=>a+dayCalc(d).ord,0))} · Straordinari ${fmt(otm)}${days.some(d=>dayCalc(d).fest)?' · Festivi '+fmt(days.reduce((a,d)=>a+dayCalc(d).fest,0)):''}</p>
+  ${Object.keys(weeks).sort().reverse().map(w=>`<div class="wk"><span>Settimana dal ${w.slice(8)}/${w.slice(5,7)}</span><span>${fmt(wsum(w,d=>dayMin(hoursData.days[d])))} · straord. <b>${fmt(wsum(w,d=>ot[d]))}</b></span></div>`+weeks[w].map(d=>{const x=hoursData.days[d];return `<div class="day" onclick="go('editDay',{date:'${d}'})"><div class="dd">${+d.slice(8)}<small>${wd(d)}</small></div><div class="tt">${x.in} – ${x.out}<br>pausa ${x.lunch||0} min</div><div class="hh">${fmt(dayMin(x))}${dayCalc(d).fest?'<small>festivo</small>':ot[d]>0?`<small>+${fmt(ot[d])} straord.</small>`:''}</div></div>`}).join('')).join('')||'<div class="empty">Nessun giorno segnato in questo mese.</div>'}
+  <h2>Contratto</h2><label>Ore ordinarie al giorno (lun-ven). Oltre sono straordinario; il sabato è tutto straordinario</label>
+  <input id="dh" type="number" step="0.25" min="1" value="${esc(hoursData.dailyHours)}">
+  <label>Festività locali (giorno/mese, separate da virgola). Domeniche e festività nazionali sono già comprese</label>
+  <input id="lh" value="${esc((hoursData.localHolidays||[]).map(x=>x.slice(3)+'/'+x.slice(0,2)).join(', '))}">
+  <button style="width:100%" onclick="saveContract()">Salva</button>
   <button class="p fab" onclick="go('editDay',{date:null})">+ Giorno</button>`;
 }
-async function saveWeekly(){const v=parseFloat($('wh').value);if(!(v>0))return toast('Valore non valido');hoursData.weeklyHours=v;await saveHours();toast('Salvato');render()}
+async function saveContract(){
+  const v=parseFloat($('dh').value);if(!(v>0))return toast('Ore al giorno non valide');
+  const l=[];for(const t of $('lh').value.split(',').map(x=>x.trim()).filter(Boolean)){const m=t.match(/^(\d{1,2})\/(\d{1,2})$/);if(!m)return toast('Festività non valida: '+t+' (scrivi giorno/mese, es. 11/11)');l.push(m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0'))}
+  hoursData.dailyHours=v;hoursData.localHolidays=l;await saveHours();toast('Salvato');render();
+}
 
 function renderEditDay(hd,app){
   const d0=view.date,ex=d0?hoursData.days[d0]:null;
@@ -389,19 +405,20 @@ function renderSlip(hd,app){
 // confronto tra ore in busta e ore calcolate dall'app con gli orari segnati
 function slipCompare(p,d){
   const c=d.compare;if(!c)return '';
-  const days=Object.keys(hoursData.days).filter(x=>x.startsWith(p.ym)),ot=calcOT();
+  const days=Object.keys(hoursData.days).filter(x=>x.startsWith(p.ym));
   if(!days.length)return `<div class="banner">Confronto ore: non hai segnato orari per questo mese.</div>`;
-  const appTot=days.reduce((a,x)=>a+dayMin(hoursData.days[x]),0),appOt=days.reduce((a,x)=>a+ot[x],0);
+  const sum=k=>days.reduce((a,x)=>a+dayCalc(x)[k],0),appTot=sum('tot'),appOt=sum('ot'),appFest=sum('fest');
   const [Y,M]=p.ym.split('-').map(Number);let miss=0;
-  for(let i=1;i<=new Date(Y,M,0).getDate();i++){const g=new Date(Y,M-1,i).getDay(),k=p.ym+'-'+String(i).padStart(2,'0');if(g>0&&g<6&&!hoursData.days[k])miss++}
+  for(let i=1;i<=new Date(Y,M,0).getDate();i++){const k=p.ym+'-'+String(i).padStart(2,'0'),g=new Date(Y,M-1,i).getDay();if(g>0&&g<6&&!isFest(k)&&!hoursData.days[k])miss++}
   const hm=h=>Math.round(h*60);
   const row=(label,app,h)=>{
     if(h==null)return `<div class="it"><span class="l">${label}<br><small>App ${fmt(app)} · Busta non indicato</small></span><b>—</b></div>`;
     const diff=app-hm(h),ok=Math.abs(diff)<=15;
     return `<div class="it"><span class="l">${label}<br><small>App ${fmt(app)} · Busta ${fmt(hm(h))}</small></span><b style="color:${ok?'var(--ok)':'var(--acc)'}">${ok?'✓ Torna':'Δ '+(diff>0?'+':'')+fmt(diff)}</b></div>`;
   };
-  const busta=(c.ordinarie==null&&c.straordinarie==null)?null:(c.ordinarie||0)+(c.straordinarie||0);
-  return `<div class="sec"><h3>Confronto con i tuoi orari</h3>${row('Ore lavorate (ordinarie + straordinarie)',appTot,busta)}${row('Straordinari',appOt,c.straordinarie==null?null:c.straordinarie)}
+  const any=c.ordinarie!=null||c.straordinarie!=null||c.festive!=null;
+  const busta=any?(c.ordinarie||0)+(c.straordinarie||0)+(c.festive||0):null;
+  return `<div class="sec"><h3>Confronto con i tuoi orari</h3>${row('Ore lavorate (totali)',appTot,busta)}${row('Straordinari (feriali e sabato)',appOt,c.straordinarie==null?null:c.straordinarie)}${(appFest>0||c.festive>0)?row('Ore lavorate in festivi/domeniche',appFest,c.festive==null?null:c.festive):''}
   <div class="it"><span class="l"><small>${c.altre_pagate>0?'In busta ci sono anche '+fmt(hm(c.altre_pagate))+' di ore pagate non lavorate (ferie, permessi, festività): non confrontate. ':''}Giorni feriali senza orario segnato nell'app: ${miss}.${c.note?' '+esc(c.note):''}</small></span><span class="rp" title="Segnala errore" onclick="reportCtx('Busta ${p.id} (${p.ym}) / Confronto ore')">⚠</span></div></div>`;
 }
 async function openSlip(){const f=await dbGet('slip:'+view.id);if(!f)return toast('PDF non trovato su questo telefono');const u=URL.createObjectURL(f);window.open(u,'_blank')||(location.href=u)}
