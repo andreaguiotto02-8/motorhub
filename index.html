@@ -82,6 +82,7 @@ h2{font-size:18px;margin:16px 0 8px}
 .cl.ok{background:#1f2a22}
 .cl.ok .n{color:var(--txt);font-weight:700}
 .cl.fs .n{color:var(--red)}
+.nt{white-space:pre-wrap;word-break:break-word;margin-top:6px;font-size:15px}
 .cl.pt{background:#2d2616;border:1px dashed var(--acc)}
 .cl.pt .n{color:var(--txt);font-weight:700}
 .cl.td{outline:2px solid var(--acc)}
@@ -116,18 +117,20 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='1.9';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='2.0';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
 
 // ---------- Orari di lavoro ----------
 let hoursData={weeklyHours:40,dailyHours:8,localHolidays:['11-11'],days:{}};   // days: {'2026-11-11':{in:'07:30',out:'16:30',lunch:60}}
+let notes=[];   // appunti di lavoro: {id,title,text,t}
 let payslips=[],slipData={},reports=[];   // buste: {id,ym,name}; dati letti dalla pianificata; segnalazioni di errore
+const saveNotes=async()=>{await dbSet('notes',notes);schedulePush()};
 const saveSlips=async()=>{await dbSet('payslips',payslips);schedulePush()};
 const saveReports=async()=>{await dbSet('reports',reports);schedulePush()};
 const saveHours=async()=>{await dbSet('hours',hoursData);schedulePush()};
-const tabs=a=>`<div class="chips" style="margin-top:6px"><div class="chip ${a==='list'?'on':''}" onclick="go('list')">Motori</div><div class="chip ${a==='hours'?'on':''}" onclick="go('hours')">Orari</div><div class="chip ${a==='slips'?'on':''}" onclick="go('slips')">Buste</div></div>`;
+const tabs=a=>`<div class="chips" style="margin-top:6px"><div class="chip ${a==='list'?'on':''}" onclick="go('list')">Motori</div><div class="chip ${a==='hours'?'on':''}" onclick="go('hours')">Orari</div><div class="chip ${a==='slips'?'on':''}" onclick="go('slips')">Buste</div><div class="chip ${a==='notes'?'on':''}" onclick="go('notes')">Note</div></div>`;
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
 const toMin=t=>{if(!t)return 0;const [h,m]=t.split(':').map(Number);return h*60+m};
 const dayMin=d=>d&&d.in&&d.out?Math.max(0,toMin(d.out)-toMin(d.in)-(+d.lunch||0)):0;
@@ -179,6 +182,7 @@ async function pushState(){
   try{
     await ghPut('state.json',toB64(JSON.stringify({app:'motorhub',appVersion:APPV,updated:new Date().toISOString(),motors},null,1)),'Dati app');
     await ghPut('hours.json',toB64(JSON.stringify({appVersion:APPV,updated:new Date().toISOString(),...hoursData,days:Object.fromEntries(Object.entries(hoursData.days).filter(([k,v])=>v.in&&v.out)),dailyHours:(+hoursData.weeklyHours||40)/5},null,1)),'Orari');
+    await ghPut('notes.json',toB64(JSON.stringify({appVersion:APPV,notes},null,1)),'Appunti');
     await ghPut('payslips.json',toB64(JSON.stringify({appVersion:APPV,payslips},null,1)),'Elenco buste');
     await ghPut('reports.json',toB64(JSON.stringify({appVersion:APPV,reports},null,1)),'Segnalazioni');
     await ghPut('usage.json',toB64(JSON.stringify({appVersion:APPV,events:usage},null,1)),'Registro uso');
@@ -234,6 +238,8 @@ function render(){
   if(view.name==='menu') return renderMenu(hd,app);
   if(view.name==='hours') return renderHours(hd,app);
   if(view.name==='slips') return renderSlips(hd,app);
+  if(view.name==='notes') return renderNotes(hd,app);
+  if(view.name==='editNote') return renderEditNote(hd,app);
   if(view.name==='slip') return renderSlip(hd,app);
   if(view.name==='addSlip') return renderAddSlip(hd,app);
   if(view.name==='report') return renderReport(hd,app);
@@ -416,6 +422,33 @@ async function delDay(){
   delete hoursData.days[sheet.ds];await saveHours();closeSheet();render();
 }
 
+// ---------- Note di lavoro ----------
+function renderNotes(hd,app){
+  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b><small class="v">v${APPV}</small></h1><button class="s" onclick="go('menu')">⋯</button></div>${tabs('notes')}`;
+  const l=[...notes].sort((a,b)=>b.t.localeCompare(a.t));
+  app.innerHTML=(l.map(n=>`<div class="item" onclick="go('editNote',{id:'${n.id}'})"><div class="m">${esc(n.title)}</div>${n.text?`<div class="nt">${esc(n.text)}</div>`:''}</div>`).join('')||'<div class="empty">Nessuna nota.<br>Premi “+ Nota” per scrivere la prima.</div>')+`<button class="p fab" onclick="go('editNote',{id:null})">+ Nota</button>`;
+}
+function renderEditNote(hd,app){
+  const n=notes.find(x=>x.id===view.id)||{title:'',text:''};
+  hd.innerHTML=`<div class="top"><button class="back" onclick="go('notes')">‹ Annulla</button><h1 style="text-align:right">${view.id?'Modifica nota':'Nuova nota'}</h1></div>`;
+  app.innerHTML=`<label>Titolo</label><input id="n_title" value="${esc(n.title)}" placeholder="es. Misure cliente Rossi">
+  <label>Nota</label><textarea id="n_text" style="min-height:220px">${esc(n.text)}</textarea>
+  <button class="p" style="width:100%" onclick="saveNote()">Salva</button>
+  ${view.id?'<button class="d" style="width:100%;margin-top:14px" onclick="delNote()">Elimina nota</button>':''}`;
+}
+async function saveNote(){
+  const title=$('n_title').value.trim(),text=$('n_text').value.trim();
+  if(!title)return toast('Serve un titolo');
+  let n=notes.find(x=>x.id===view.id);
+  if(!n){n={id:uid()};notes.push(n)}
+  Object.assign(n,{title,text,t:new Date().toISOString()});
+  await saveNotes();toast('Salvata');go('notes');
+}
+async function delNote(){
+  if(!confirm('Eliminare questa nota?'))return;
+  notes=notes.filter(x=>x.id!==view.id);await saveNotes();go('notes');
+}
+
 // ---------- Buste paga ----------
 const monthLabel=ym=>new Date(ym+'-01T12:00:00').toLocaleDateString('it-IT',{month:'long',year:'numeric'});
 function renderSlips(hd,app){
@@ -510,7 +543,7 @@ function renderMenu(hd,app){
   ${[...reports].sort((a,b)=>b.t.localeCompare(a.t)).slice(0,8).map(r=>`<div class="banner ${r.status==='risolta'?'ok':''}"><b>${r.status==='risolta'?'Risolta':r.status==='aperta'?'In attesa':esc(r.status)}</b> · ${esc(r.note)}${r.reply?'<br>'+esc(r.reply):''}</div>`).join('')||'<p class="note">Nessuna segnalazione.</p>'}
   <button style="width:100%" onclick="reportCtx('Generale (app)')">⚠ Segnala un problema dell'app</button>
   <h2>Copia di sicurezza</h2>
-  <p class="note">Salva motori, procedure e orari in un file. I PDF non sono inclusi.</p>
+  <p class="note">Salva motori, procedure, orari e note in un file. I PDF non sono inclusi.</p>
   <button class="p" style="width:100%" onclick="exportData()">Esporta dati</button>
   <button style="width:100%;margin-top:10px" onclick="$('imp').click()">Importa dati</button>
   <input type="file" id="imp" accept="application/json" hidden>
@@ -519,7 +552,7 @@ function renderMenu(hd,app){
     const f=e.target.files[0];if(!f)return;
     try{const d=JSON.parse(await f.text());if(!Array.isArray(d.motors))throw 0;
       if(!confirm('Sostituire i dati attuali con quelli del file?'))return;
-      motors=d.motors;if(d.hours&&d.hours.days)hoursData=d.hours;await dbSet('hours',hoursData);await save();toast('Dati importati');go('list')}catch{toast('File non valido')}
+      motors=d.motors;if(d.hours&&d.hours.days)hoursData=d.hours;if(Array.isArray(d.notes)){notes=d.notes;await dbSet('notes',notes)}await dbSet('hours',hoursData);await save();toast('Dati importati');go('list')}catch{toast('File non valido')}
   };
 }
 async function saveSync(){
@@ -533,7 +566,7 @@ async function syncNow(){
   toast(a&&b?'Sincronizzato':'Problema di collegamento');render();
 }
 function exportData(){
-  const b=new Blob([JSON.stringify({app:'motorhub',date:new Date().toISOString(),motors,hours:hoursData},null,1)],{type:'application/json'});
+  const b=new Blob([JSON.stringify({app:'motorhub',date:new Date().toISOString(),motors,hours:hoursData,notes},null,1)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='motorhub-dati.json';a.click();
 }
 
@@ -542,6 +575,7 @@ function exportData(){
   motors=(await dbGet('motors'))||[];
   cfg={...cfg,...((await dbGet('cfg'))||{})};
   usage=(await dbGet('usage'))||[];
+  notes=(await dbGet('notes'))||[];
   payslips=(await dbGet('payslips'))||[];slipData=(await dbGet('slipData'))||{};reports=(await dbGet('reports'))||[];
   hoursData={...hoursData,...((await dbGet('hours'))||{})};
   log('apertura');
