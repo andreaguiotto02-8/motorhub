@@ -93,7 +93,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='1.5';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='1.6';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -121,7 +121,7 @@ function holidays(y){
 }
 function isFest(ds){const d=new Date(ds+'T12:00:00');return d.getDay()===0||holidays(d.getFullYear()).has(ds)}
 function dayCalc(ds){
-  const w=dayMin(hoursData.days[ds]),lim=(+hoursData.dailyHours||8)*60;
+  const w=dayMin(hoursData.days[ds]),lim=((+hoursData.weeklyHours||40)/5)*60;
   if(isFest(ds))return{ord:0,ot:0,fest:w,tot:w};
   if(new Date(ds+'T12:00:00').getDay()===6)return{ord:0,ot:w,fest:0,tot:w};
   return{ord:Math.min(w,lim),ot:Math.max(0,w-lim),fest:0,tot:w};
@@ -155,7 +155,7 @@ function schedulePush(){if(!cfg.token)return;clearTimeout(pushT);pushT=setTimeou
 async function pushState(){
   try{
     await ghPut('state.json',toB64(JSON.stringify({app:'motorhub',appVersion:APPV,updated:new Date().toISOString(),motors},null,1)),'Dati app');
-    await ghPut('hours.json',toB64(JSON.stringify({appVersion:APPV,updated:new Date().toISOString(),...hoursData},null,1)),'Orari');
+    await ghPut('hours.json',toB64(JSON.stringify({appVersion:APPV,updated:new Date().toISOString(),...hoursData,dailyHours:(+hoursData.weeklyHours||40)/5},null,1)),'Orari');
     await ghPut('payslips.json',toB64(JSON.stringify({appVersion:APPV,payslips},null,1)),'Elenco buste');
     await ghPut('reports.json',toB64(JSON.stringify({appVersion:APPV,reports},null,1)),'Segnalazioni');
     await ghPut('usage.json',toB64(JSON.stringify({appVersion:APPV,events:usage},null,1)),'Registro uso');
@@ -327,17 +327,17 @@ function renderHours(hd,app){
   <div class="card ot"><div class="v">${fmt(otm)}</div><div class="l">Straord. mese</div></div></div>
   <p class="note" style="margin:0 2px 6px">Ordinarie ${fmt(days.reduce((a,d)=>a+dayCalc(d).ord,0))} · Straordinari ${fmt(otm)}${days.some(d=>dayCalc(d).fest)?' · Festivi '+fmt(days.reduce((a,d)=>a+dayCalc(d).fest,0)):''}</p>
   ${Object.keys(weeks).sort().reverse().map(w=>`<div class="wk"><span>Settimana dal ${w.slice(8)}/${w.slice(5,7)}</span><span>${fmt(wsum(w,d=>dayMin(hoursData.days[d])))} · straord. <b>${fmt(wsum(w,d=>ot[d]))}</b></span></div>`+weeks[w].map(d=>{const x=hoursData.days[d];return `<div class="day" onclick="go('editDay',{date:'${d}'})"><div class="dd">${+d.slice(8)}<small>${wd(d)}</small></div><div class="tt">${x.in} – ${x.out}<br>pausa ${x.lunch||0} min</div><div class="hh">${fmt(dayMin(x))}${dayCalc(d).fest?'<small>festivo</small>':ot[d]>0?`<small>+${fmt(ot[d])} straord.</small>`:''}</div></div>`}).join('')).join('')||'<div class="empty">Nessun giorno segnato in questo mese.</div>'}
-  <h2>Contratto</h2><label>Ore ordinarie al giorno (lun-ven). Oltre sono straordinario; il sabato è tutto straordinario</label>
-  <input id="dh" type="number" step="0.25" min="1" value="${esc(hoursData.dailyHours)}">
+  <h2>Contratto</h2><label>Ore settimanali da contratto. Si dividono per i 5 giorni lun-ven (oggi ${+((+hoursData.weeklyHours||40)/5).toFixed(2)} ore al giorno): oltre sono straordinario; il sabato è tutto straordinario</label>
+  <input id="dh" type="number" step="0.5" min="1" value="${esc(hoursData.weeklyHours)}">
   <label>Festività locali (giorno/mese, separate da virgola). Domeniche e festività nazionali sono già comprese</label>
   <input id="lh" value="${esc((hoursData.localHolidays||[]).map(x=>x.slice(3)+'/'+x.slice(0,2)).join(', '))}">
   <button style="width:100%" onclick="saveContract()">Salva</button>
   <button class="p fab" onclick="go('editDay',{date:null})">+ Giorno</button>`;
 }
 async function saveContract(){
-  const v=parseFloat($('dh').value);if(!(v>0))return toast('Ore al giorno non valide');
+  const v=parseFloat($('dh').value);if(!(v>0))return toast('Ore settimanali non valide');
   const l=[];for(const t of $('lh').value.split(',').map(x=>x.trim()).filter(Boolean)){const m=t.match(/^(\d{1,2})\/(\d{1,2})$/);if(!m)return toast('Festività non valida: '+t+' (scrivi giorno/mese, es. 11/11)');l.push(m[2].padStart(2,'0')+'-'+m[1].padStart(2,'0'))}
-  hoursData.dailyHours=v;hoursData.localHolidays=l;await saveHours();toast('Salvato');render();
+  hoursData.weeklyHours=v;hoursData.dailyHours=v/5;hoursData.localHolidays=l;await saveHours();toast('Salvato');render();
 }
 
 function renderEditDay(hd,app){
