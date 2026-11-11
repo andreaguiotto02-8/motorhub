@@ -48,6 +48,8 @@ h2{font-size:18px;margin:16px 0 8px}
 .fab{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));box-shadow:0 4px 14px #0008;border-radius:30px;padding:16px 22px}
 .note{color:var(--mut);font-size:14px;white-space:pre-wrap}
 .back{background:none;padding:8px 4px;color:var(--acc)}
+.banner{background:#3a2a12;color:#ffb36b;border-radius:12px;padding:10px 12px;margin:8px 0;font-size:14px}
+.banner.ok{background:#12301f;color:#7ee2b0}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ok);color:#111;padding:10px 16px;border-radius:12px;font-weight:700;display:none;z-index:9}
 </style>
 </head>
@@ -67,8 +69,73 @@ const dbDel=async k=>{const d=await idb();return new Promise(ok=>{const t=d.tran
 let motors=[];            // {id,brand,model,type,notes,hasPdf,procs:[{id,title,steps:[]}]}
 let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
+let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
+let usage=[];                                         // registro d'uso (ultimi 300 eventi)
+const REPO='andreaguiotto02-8/motorhub-data',APPV='1.1';
 
-const save=()=>dbSet('motors',motors);
+const save=async()=>{await dbSet('motors',motors);schedulePush()};
+const saveCfg=()=>dbSet('cfg',cfg);
+
+// ---------- Registro d'uso ----------
+function log(type,info){
+  const last=usage[usage.length-1];
+  if(last&&last.type===type&&last.info===info)return;
+  usage.push({t:new Date().toISOString(),type,info:info||''});
+  if(usage.length>300)usage=usage.slice(-300);
+  dbSet('usage',usage);
+}
+addEventListener('error',e=>log('error',String(e.message||e).slice(0,200)));
+addEventListener('unhandledrejection',e=>log('error',String(e.reason).slice(0,200)));
+
+// ---------- Collegamento con GitHub (deposito privato) ----------
+const gh=(path,opt={})=>fetch(`https://api.github.com/repos/${REPO}/contents/${path}`,{...opt,headers:{Authorization:'Bearer '+cfg.token,Accept:'application/vnd.github+json',...(opt.headers||{})}});
+async function ghPut(path,b64,msg){
+  let sha;const g=await gh(path);if(g.ok)sha=(await g.json()).sha;
+  const r=await gh(path,{method:'PUT',body:JSON.stringify({message:msg,content:b64,sha})});
+  if(!r.ok)throw new Error('GitHub '+r.status);
+}
+const toB64=s=>{const b=new TextEncoder().encode(s);let x='';b.forEach(c=>x+=String.fromCharCode(c));return btoa(x)};
+const fileB64=f=>new Promise((ok,ko)=>{const r=new FileReader();r.onload=()=>ok(r.result.split(',')[1]);r.onerror=ko;r.readAsDataURL(f)});
+const ghRaw=async p=>{const r=await gh(p,{headers:{Accept:'application/vnd.github.raw'}});return r.ok?r.text():null};
+
+let pushT;
+function schedulePush(){if(!cfg.token)return;clearTimeout(pushT);pushT=setTimeout(pushState,4000)}
+async function pushState(){
+  try{
+    await ghPut('state.json',toB64(JSON.stringify({app:'motorhub',appVersion:APPV,updated:new Date().toISOString(),motors},null,1)),'Dati app');
+    await ghPut('usage.json',toB64(JSON.stringify({appVersion:APPV,events:usage},null,1)),'Registro uso');
+    cfg.lastSync=new Date().toISOString();saveCfg();return true;
+  }catch(e){log('error','sync: '+e.message);return false}
+}
+async function pullUpdates(){
+  if(!cfg.token)return false;
+  try{
+    const st=await ghRaw('status.json');if(st){try{cfg.status=JSON.parse(st);saveCfg()}catch{}}
+    const r=await gh('extracted');if(!r.ok)return r.status===404;
+    let changed=false;
+    for(const f of await r.json()){
+      if(!f.name.endsWith('.json'))continue;
+      const m=motors.find(x=>x.id===f.name.slice(0,-5));if(!m)continue;
+      let d;try{d=JSON.parse(await ghRaw(f.path))}catch{continue}
+      if(!Array.isArray(d.procs))continue;
+      const ids=new Set(d.procs.map(p=>p.id));
+      for(const p of d.procs){
+        const ex=m.procs.find(x=>x.id===p.id);
+        if(!ex){m.procs.push({id:p.id,title:p.title,steps:p.steps,source:'pdf'});changed=true}
+        else if(ex.source==='pdf'&&JSON.stringify([ex.title,ex.steps])!==JSON.stringify([p.title,p.steps])){ex.title=p.title;ex.steps=p.steps;changed=true}
+      }
+      const before=m.procs.length;m.procs=m.procs.filter(x=>x.source!=='pdf'||ids.has(x.id));if(m.procs.length!==before)changed=true;
+    }
+    if(changed){await dbSet('motors',motors);toast('Nuove procedure dai PDF');render()}
+    return true;
+  }catch(e){log('error','aggiornamento: '+e.message);return false}
+}
+async function uploadPdf(id,f){
+  if(!cfg.token)return;
+  try{await ghPut('pdf/'+id+'.pdf',await fileB64(f),'PDF '+id);toast('PDF inviato per la lettura automatica')}
+  catch(e){log('error','pdf: '+e.message);toast('PDF non inviato (controlla la chiave)')}
+}
+function daysLeft(){if(!cfg.expiry)return null;return Math.ceil((new Date(cfg.expiry+'T23:59:59')-new Date())/864e5)}
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function toast(t){const e=document.getElementById('toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',1800)}
@@ -90,7 +157,9 @@ function renderList(hd,app){
   <input id="q" type="search" placeholder="Cerca motore, marca o procedura…" value="${esc(q)}">
   <div class="chips"><div class="chip ${brandF?'':'on'}" onclick="setBrand('')">Tutti</div>${brands.map(b=>`<div class="chip ${brandF===b?'on':''}" onclick="setBrand('${esc(b)}')">${esc(b)}</div>`).join('')}</div>`;
   $('q').oninput=e=>{q=e.target.value;list()};
-  app.innerHTML='<div id="lst"></div><button class="p fab" onclick="newMotor()">+ Motore</button>';
+  const dl=daysLeft();
+  const warn=cfg.token&&dl!==null&&dl<=30?`<div class="banner" onclick="go('menu')">${dl<0?'La chiave di collegamento è scaduta.':'La chiave di collegamento scade tra '+dl+' giorni.'} Tocca qui per rinnovarla.</div>`:'';
+  app.innerHTML=warn+'<div id="lst"></div><button class="p fab" onclick="newMotor()">+ Motore</button>';
   list();
 }
 function list(){
@@ -100,6 +169,7 @@ function list(){
   $('lst').innerHTML=r.length?r.map(m=>`<div class="item" onclick="openMotor('${m.id}')"><div class="m">${esc(m.model)}</div><div class="b">${esc(m.brand)}${m.type?' · '+esc(m.type):''}</div>
    <span class="tag">${m.procs.length} procedure</span>${m.hasPdf?'<span class="tag pdf">PDF</span>':''}</div>`).join('')
    :`<div class="empty">${motors.length?'Nessun risultato':'Nessun motore.<br>Premi “+ Motore” per iniziare.'}</div>`;
+  if(!r.length&&t.length>=3)log('ricerca_senza_risultati',t);
 }
 function setBrand(b){brandF=b;render()}
 function go(n,extra={}){view={name:n,...extra};render();scrollTo(0,0)}
@@ -117,10 +187,10 @@ function renderMotor(hd,app){
   </div>
   <input type="file" id="pdfIn" accept="application/pdf" hidden>
   <h2>Procedure</h2>
-  ${m.procs.map(p=>`<details class="proc"><summary>${esc(p.title)}</summary><ol>${p.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
+  ${m.procs.map(p=>`<details class="proc"><summary>${esc(p.title)}${p.source==='pdf'?' <span class="tag pdf">dal PDF</span>':''}</summary><ol>${p.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
     <div class="act"><button class="s" onclick="go('editProc',{id:'${m.id}',pid:'${p.id}'})">Modifica</button><button class="s d" onclick="delProc('${p.id}')">Elimina</button></div></details>`).join('')||'<div class="empty" style="margin:20px 0">Nessuna procedura ancora.</div>'}
   <button class="p fab" onclick="go('editProc',{id:'${m.id}',pid:null})">+ Procedura</button>`;
-  $('pdfIn').onchange=async e=>{const f=e.target.files[0];if(!f)return;await dbSet('pdf:'+m.id,f);m.hasPdf=true;m.pdfName=f.name;await save();toast('PDF salvato');render()};
+  $('pdfIn').onchange=async e=>{const f=e.target.files[0];if(!f)return;await dbSet('pdf:'+m.id,f);m.hasPdf=true;m.pdfName=f.name;await save();toast('PDF salvato');render();uploadPdf(m.id,f)};
 }
 function pickPdf(){$('pdfIn').click()}
 async function openPdf(){
@@ -170,12 +240,22 @@ async function saveProc(){
   if(!title||!steps.length)return toast('Servono titolo e almeno un passo');
   const m=motors.find(x=>x.id===view.id);let p=m.procs.find(x=>x.id===view.pid);
   if(!p){p={id:uid()};m.procs.push(p)}
-  p.title=title;p.steps=steps;await save();toast('Salvato');go('motor',{id:m.id});
+  p.title=title;p.steps=steps;delete p.source;await save();toast('Salvato');go('motor',{id:m.id});
 }
 
 function renderMenu(hd,app){
   hd.innerHTML=`<div class="top"><button class="back" onclick="go('list')">‹ Indietro</button><h1 style="text-align:right">Menu</h1></div>`;
-  app.innerHTML=`<h2>Copia di sicurezza</h2>
+  const dl=daysLeft(),stt=cfg.status;
+  app.innerHTML=`<h2>Collegamento automatico</h2>
+  <p class="note">Invia i PDF e i dati al deposito privato, da cui il controllo automatico ricava le procedure e migliora l'app.</p>
+  <label>Chiave di accesso</label><input id="c_tok" type="password" autocomplete="off" placeholder="${cfg.token?'Chiave salvata (scrivi per sostituirla)':'Incolla qui la chiave'}">
+  <label>Scadenza della chiave</label><input id="c_exp" type="date" value="${esc(cfg.expiry)}">
+  <button class="p" style="width:100%" onclick="saveSync()">Salva collegamento</button>
+  ${cfg.token?`<button style="width:100%;margin-top:10px" onclick="syncNow()">Sincronizza ora</button>`:''}
+  ${cfg.token&&dl!==null?`<div class="banner ${dl>30?'ok':''}">${dl<0?'Chiave scaduta.':'Chiave valida ancora per '+dl+' giorni.'}</div>`:''}
+  ${cfg.lastSync?`<p class="note">Ultimo invio dati: ${new Date(cfg.lastSync).toLocaleString('it-IT')}</p>`:''}
+  ${stt?`<div class="banner ${stt.problems&&stt.problems.length?'':'ok'}"><b>Ultimo controllo automatico${stt.lastRun?' ('+new Date(stt.lastRun).toLocaleDateString('it-IT')+')':''}</b><br>${esc(stt.summary||'')}${(stt.problems||[]).map(x=>'<br>⚠ '+esc(x)).join('')}</div>`:''}
+  <h2>Copia di sicurezza</h2>
   <p class="note">Salva tutti i motori e le procedure in un file. I PDF non sono inclusi.</p>
   <button class="p" style="width:100%" onclick="exportData()">Esporta dati</button>
   <button style="width:100%;margin-top:10px" onclick="$('imp').click()">Importa dati</button>
@@ -188,6 +268,16 @@ function renderMenu(hd,app){
       motors=d.motors;await save();toast('Dati importati');go('list')}catch{toast('File non valido')}
   };
 }
+async function saveSync(){
+  const t=$('c_tok').value.trim();if(t)cfg.token=t;
+  cfg.expiry=$('c_exp').value;await saveCfg();toast('Collegamento salvato');
+  if(cfg.token){const ok=await pushState();toast(ok?'Collegamento funzionante':'Chiave non valida o senza permessi');}
+  render();
+}
+async function syncNow(){
+  toast('Sincronizzo…');const a=await pushState(),b=await pullUpdates();
+  toast(a&&b?'Sincronizzato':'Problema di collegamento');render();
+}
 function exportData(){
   const b=new Blob([JSON.stringify({app:'motorhub',date:new Date().toISOString(),motors},null,1)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='motorhub-dati.json';a.click();
@@ -196,7 +286,11 @@ function exportData(){
 // ---------- Avvio e aggiornamento automatico ----------
 (async()=>{
   motors=(await dbGet('motors'))||[];
+  cfg={...cfg,...((await dbGet('cfg'))||{})};
+  usage=(await dbGet('usage'))||[];
+  log('apertura');
   render();
+  if(cfg.token){pullUpdates().then(()=>schedulePush())}
   if('serviceWorker' in navigator){
     let had=!!navigator.serviceWorker.controller;
     navigator.serviceWorker.addEventListener('controllerchange',()=>{if(had)location.reload();had=true});
