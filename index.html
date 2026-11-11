@@ -50,6 +50,21 @@ h2{font-size:18px;margin:16px 0 8px}
 .back{background:none;padding:8px 4px;color:var(--acc)}
 .banner{background:#3a2a12;color:#ffb36b;border-radius:12px;padding:10px 12px;margin:8px 0;font-size:14px}
 .banner.ok{background:#12301f;color:#7ee2b0}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:10px 0}
+.card{background:var(--card);border-radius:14px;padding:12px;text-align:center}
+.card .v{font-size:22px;font-weight:700}
+.card .l{font-size:12px;color:var(--mut)}
+.card.ot .v{color:var(--acc)}
+.mnav{display:flex;align-items:center;justify-content:space-between;margin-top:8px}
+.mnav b{text-transform:capitalize}
+.wk{display:flex;justify-content:space-between;font-size:13px;color:var(--mut);margin:14px 2px 6px}
+.wk b{color:var(--acc)}
+.day{display:flex;align-items:center;gap:10px;background:var(--card);border-radius:12px;padding:12px;margin-bottom:6px}
+.day .dd{width:54px;font-weight:700}
+.day .dd small{display:block;color:var(--mut);font-weight:400;font-size:12px;text-transform:capitalize}
+.day .tt{flex:1;font-size:14px;color:var(--mut)}
+.day .hh{font-weight:700;text-align:right}
+.day .hh small{display:block;color:var(--acc);font-size:12px}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ok);color:#111;padding:10px 16px;border-radius:12px;font-weight:700;display:none;z-index:9}
 </style>
 </head>
@@ -71,10 +86,29 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='1.1';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='1.2';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
+
+// ---------- Orari di lavoro ----------
+let hoursData={weeklyHours:40,days:{}};   // days: {'2026-11-11':{in:'07:30',out:'16:30',lunch:60}}
+const saveHours=async()=>{await dbSet('hours',hoursData);schedulePush()};
+const tabs=a=>`<div class="chips" style="margin-top:6px"><div class="chip ${a==='list'?'on':''}" onclick="go('list')">Motori</div><div class="chip ${a==='hours'?'on':''}" onclick="go('hours')">Orari</div></div>`;
+const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
+const toMin=t=>{if(!t)return 0;const [h,m]=t.split(':').map(Number);return h*60+m};
+const dayMin=d=>d&&d.in&&d.out?Math.max(0,toMin(d.out)-toMin(d.in)-(+d.lunch||0)):0;
+const fmt=m=>{const s=m<0?'-':'';m=Math.abs(Math.round(m));return s+Math.floor(m/60)+':'+String(m%60).padStart(2,'0')};
+const monday=ds=>{const d=new Date(ds+'T12:00:00');d.setDate(d.getDate()-((d.getDay()+6)%7));return d.toISOString().slice(0,10)};
+// straordinario assegnato al giorno in cui si supera il limite settimanale (lun-dom)
+function calcOT(){
+  const lim=(+hoursData.weeklyHours||40)*60,ot={},cum={};
+  Object.keys(hoursData.days).sort().forEach(ds=>{
+    const w=monday(ds),b=cum[w]||0,a=b+dayMin(hoursData.days[ds]);cum[w]=a;
+    ot[ds]=Math.max(0,a-lim)-Math.max(0,b-lim);
+  });
+  return ot;
+}
 
 // ---------- Registro d'uso ----------
 function log(type,info){
@@ -103,6 +137,7 @@ function schedulePush(){if(!cfg.token)return;clearTimeout(pushT);pushT=setTimeou
 async function pushState(){
   try{
     await ghPut('state.json',toB64(JSON.stringify({app:'motorhub',appVersion:APPV,updated:new Date().toISOString(),motors},null,1)),'Dati app');
+    await ghPut('hours.json',toB64(JSON.stringify({appVersion:APPV,updated:new Date().toISOString(),...hoursData},null,1)),'Orari');
     await ghPut('usage.json',toB64(JSON.stringify({appVersion:APPV,events:usage},null,1)),'Registro uso');
     cfg.lastSync=new Date().toISOString();saveCfg();return true;
   }catch(e){log('error','sync: '+e.message);return false}
@@ -149,11 +184,13 @@ function render(){
   if(view.name==='editMotor') return renderEditMotor(hd,app);
   if(view.name==='editProc') return renderEditProc(hd,app);
   if(view.name==='menu') return renderMenu(hd,app);
+  if(view.name==='hours') return renderHours(hd,app);
+  if(view.name==='editDay') return renderEditDay(hd,app);
 }
 
 function renderList(hd,app){
   const brands=[...new Set(motors.map(m=>m.brand).filter(Boolean))].sort();
-  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b></h1><button class="s" onclick="go('menu')">⋯</button></div>
+  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b></h1><button class="s" onclick="go('menu')">⋯</button></div>${tabs('list')}
   <input id="q" type="search" placeholder="Cerca motore, marca o procedura…" value="${esc(q)}">
   <div class="chips"><div class="chip ${brandF?'':'on'}" onclick="setBrand('')">Tutti</div>${brands.map(b=>`<div class="chip ${brandF===b?'on':''}" onclick="setBrand('${esc(b)}')">${esc(b)}</div>`).join('')}</div>`;
   $('q').oninput=e=>{q=e.target.value;list()};
@@ -243,6 +280,52 @@ async function saveProc(){
   p.title=title;p.steps=steps;delete p.source;await save();toast('Salvato');go('motor',{id:m.id});
 }
 
+function renderHours(hd,app){
+  const ym=view.ym||today().slice(0,7),[Y,M]=ym.split('-').map(Number);
+  const key=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+  const label=new Date(Y,M-1,1).toLocaleDateString('it-IT',{month:'long',year:'numeric'});
+  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b></h1><button class="s" onclick="go('menu')">⋯</button></div>${tabs('hours')}`;
+  const ot=calcOT(),all=Object.keys(hoursData.days);
+  const days=all.filter(d=>d.startsWith(ym)).sort().reverse();
+  const tot=days.reduce((a,d)=>a+dayMin(hoursData.days[d]),0),otm=days.reduce((a,d)=>a+ot[d],0);
+  const weeks={};days.forEach(d=>(weeks[monday(d)]=weeks[monday(d)]||[]).push(d));
+  const wsum=(w,f)=>all.filter(d=>monday(d)===w).reduce((a,d)=>a+f(d),0);
+  const td=today();
+  const wd=ds=>new Date(ds+'T12:00:00').toLocaleDateString('it-IT',{weekday:'short'});
+  app.innerHTML=`<div class="mnav"><button class="s" onclick="go('hours',{ym:'${key(new Date(Y,M-2,1))}'})">‹</button><b>${label}</b><button class="s" onclick="go('hours',{ym:'${key(new Date(Y,M,1))}'})">›</button></div>
+  <div class="grid"><div class="card"><div class="v">${fmt(dayMin(hoursData.days[td]))}</div><div class="l">Oggi</div></div>
+  <div class="card"><div class="v">${fmt(tot)}</div><div class="l">Ore del mese</div></div>
+  <div class="card ot"><div class="v">${fmt(otm)}</div><div class="l">Straord. mese</div></div></div>
+  ${Object.keys(weeks).sort().reverse().map(w=>`<div class="wk"><span>Settimana dal ${w.slice(8)}/${w.slice(5,7)}</span><span>${fmt(wsum(w,d=>dayMin(hoursData.days[d])))} · straord. <b>${fmt(wsum(w,d=>ot[d]))}</b></span></div>`+weeks[w].map(d=>{const x=hoursData.days[d];return `<div class="day" onclick="go('editDay',{date:'${d}'})"><div class="dd">${+d.slice(8)}<small>${wd(d)}</small></div><div class="tt">${x.in} – ${x.out}<br>pausa ${x.lunch||0} min</div><div class="hh">${fmt(dayMin(x))}${ot[d]>0?`<small>+${fmt(ot[d])} straord.</small>`:''}</div></div>`}).join('')).join('')||'<div class="empty">Nessun giorno segnato in questo mese.</div>'}
+  <h2>Contratto</h2><label>Ore settimanali (oltre queste è straordinario)</label>
+  <div class="row"><input id="wh" type="number" step="0.5" min="1" value="${esc(hoursData.weeklyHours)}"><button onclick="saveWeekly()">Salva</button></div>
+  <button class="p fab" onclick="go('editDay',{date:null})">+ Giorno</button>`;
+}
+async function saveWeekly(){const v=parseFloat($('wh').value);if(!(v>0))return toast('Valore non valido');hoursData.weeklyHours=v;await saveHours();toast('Salvato');render()}
+
+function renderEditDay(hd,app){
+  const d0=view.date,ex=d0?hoursData.days[d0]:null;
+  const last=Object.keys(hoursData.days).sort().pop(),lastLunch=last?hoursData.days[last].lunch:60;
+  hd.innerHTML=`<div class="top"><button class="back" onclick="go('hours',{ym:'${(d0||today()).slice(0,7)}'})">‹ Annulla</button><h1 style="text-align:right">${ex?'Modifica giorno':'Segna giorno'}</h1></div>`;
+  app.innerHTML=`<label>Data</label><input id="d_date" type="date" value="${d0||today()}">
+  <div class="row"><div><label>Entrata</label><input id="d_in" type="time" value="${ex?ex.in:''}"></div><div><label>Uscita</label><input id="d_out" type="time" value="${ex?ex.out:''}"></div></div>
+  <label>Pausa pranzo (minuti)</label><input id="d_lunch" type="number" min="0" step="5" value="${ex?ex.lunch:(lastLunch??60)}">
+  <button class="p" style="width:100%" onclick="saveDay()">Salva</button>
+  ${ex?'<button class="d" style="width:100%;margin-top:14px" onclick="delDay()">Elimina giorno</button>':''}`;
+}
+async function saveDay(){
+  const date=$('d_date').value,i=$('d_in').value,o=$('d_out').value,l=parseInt($('d_lunch').value||'0',10);
+  if(!date||!i||!o)return toast('Servono data, entrata e uscita');
+  if(toMin(o)<=toMin(i))return toast("L'uscita deve essere dopo l'entrata");
+  if(toMin(o)-toMin(i)<=l)return toast('La pausa è più lunga del turno');
+  if(view.date&&view.date!==date)delete hoursData.days[view.date];
+  hoursData.days[date]={in:i,out:o,lunch:l};await saveHours();toast('Salvato');go('hours',{ym:date.slice(0,7)});
+}
+async function delDay(){
+  if(!confirm('Eliminare questo giorno?'))return;
+  delete hoursData.days[view.date];await saveHours();go('hours',{ym:view.date.slice(0,7)});
+}
+
 function renderMenu(hd,app){
   hd.innerHTML=`<div class="top"><button class="back" onclick="go('list')">‹ Indietro</button><h1 style="text-align:right">Menu</h1></div>`;
   const dl=daysLeft(),stt=cfg.status;
@@ -256,7 +339,7 @@ function renderMenu(hd,app){
   ${cfg.lastSync?`<p class="note">Ultimo invio dati: ${new Date(cfg.lastSync).toLocaleString('it-IT')}</p>`:''}
   ${stt?`<div class="banner ${stt.problems&&stt.problems.length?'':'ok'}"><b>Ultimo controllo automatico${stt.lastRun?' ('+new Date(stt.lastRun).toLocaleDateString('it-IT')+')':''}</b><br>${esc(stt.summary||'')}${(stt.problems||[]).map(x=>'<br>⚠ '+esc(x)).join('')}</div>`:''}
   <h2>Copia di sicurezza</h2>
-  <p class="note">Salva tutti i motori e le procedure in un file. I PDF non sono inclusi.</p>
+  <p class="note">Salva motori, procedure e orari in un file. I PDF non sono inclusi.</p>
   <button class="p" style="width:100%" onclick="exportData()">Esporta dati</button>
   <button style="width:100%;margin-top:10px" onclick="$('imp').click()">Importa dati</button>
   <input type="file" id="imp" accept="application/json" hidden>
@@ -265,7 +348,7 @@ function renderMenu(hd,app){
     const f=e.target.files[0];if(!f)return;
     try{const d=JSON.parse(await f.text());if(!Array.isArray(d.motors))throw 0;
       if(!confirm('Sostituire i dati attuali con quelli del file?'))return;
-      motors=d.motors;await save();toast('Dati importati');go('list')}catch{toast('File non valido')}
+      motors=d.motors;if(d.hours&&d.hours.days)hoursData=d.hours;await dbSet('hours',hoursData);await save();toast('Dati importati');go('list')}catch{toast('File non valido')}
   };
 }
 async function saveSync(){
@@ -279,7 +362,7 @@ async function syncNow(){
   toast(a&&b?'Sincronizzato':'Problema di collegamento');render();
 }
 function exportData(){
-  const b=new Blob([JSON.stringify({app:'motorhub',date:new Date().toISOString(),motors},null,1)],{type:'application/json'});
+  const b=new Blob([JSON.stringify({app:'motorhub',date:new Date().toISOString(),motors,hours:hoursData},null,1)],{type:'application/json'});
   const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='motorhub-dati.json';a.click();
 }
 
@@ -288,6 +371,7 @@ function exportData(){
   motors=(await dbGet('motors'))||[];
   cfg={...cfg,...((await dbGet('cfg'))||{})};
   usage=(await dbGet('usage'))||[];
+  hoursData={...hoursData,...((await dbGet('hours'))||{})};
   log('apertura');
   render();
   if(cfg.token){pullUpdates().then(()=>schedulePush())}
