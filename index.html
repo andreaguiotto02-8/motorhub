@@ -82,7 +82,10 @@ h2{font-size:18px;margin:16px 0 8px}
 .cl.ok{background:#1f2a22}
 .cl.ok .n{color:var(--txt);font-weight:700}
 .cl.fs .n{color:var(--red)}
+.cl.pt{background:#2d2616;border:1px dashed var(--acc)}
+.cl.pt .n{color:var(--txt);font-weight:700}
 .cl.td{outline:2px solid var(--acc)}
+.tm .x{width:44px;font-size:16px;color:var(--mut)}
 #sheet{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;justify-content:flex-end}
 #sheet .bk{position:absolute;inset:0;background:#000a}
 #sheet .pn{position:relative;background:var(--card);border-radius:20px 20px 0 0;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom));max-height:90vh;overflow:auto}
@@ -113,7 +116,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='1.8';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='1.9';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -175,7 +178,7 @@ function schedulePush(){if(!cfg.token)return;clearTimeout(pushT);pushT=setTimeou
 async function pushState(){
   try{
     await ghPut('state.json',toB64(JSON.stringify({app:'motorhub',appVersion:APPV,updated:new Date().toISOString(),motors},null,1)),'Dati app');
-    await ghPut('hours.json',toB64(JSON.stringify({appVersion:APPV,updated:new Date().toISOString(),...hoursData,dailyHours:(+hoursData.weeklyHours||40)/5},null,1)),'Orari');
+    await ghPut('hours.json',toB64(JSON.stringify({appVersion:APPV,updated:new Date().toISOString(),...hoursData,days:Object.fromEntries(Object.entries(hoursData.days).filter(([k,v])=>v.in&&v.out)),dailyHours:(+hoursData.weeklyHours||40)/5},null,1)),'Orari');
     await ghPut('payslips.json',toB64(JSON.stringify({appVersion:APPV,payslips},null,1)),'Elenco buste');
     await ghPut('reports.json',toB64(JSON.stringify({appVersion:APPV,reports},null,1)),'Segnalazioni');
     await ghPut('usage.json',toB64(JSON.stringify({appVersion:APPV,events:usage},null,1)),'Registro uso');
@@ -339,7 +342,7 @@ function renderHours(hd,app){
   let cells=['Lun','Mar','Mer','Gio','Ven','Sab','Dom'].map(x=>`<div class="dh">${x}</div>`).join('')+'<div class="cl bl"></div>'.repeat(lead);
   for(let i=1;i<=dim;i++){
     const k=ym+'-'+String(i).padStart(2,'0'),x=hoursData.days[k];
-    cells+=`<div class="cl${x?' ok':''}${isFest(k)?' fs':''}${k===td?' td':''}" onclick="openDay('${k}')"><div class="n">${i}</div>${x?`<div class="t">${x.in}</div><div class="t">${x.out}</div>`:''}</div>`;
+    cells+=`<div class="cl${x?(x.in&&x.out?' ok':' pt'):''}${isFest(k)?' fs':''}${k===td?' td':''}" onclick="openDay('${k}')"><div class="n">${i}</div>${x?`<div class="t">${x.in||'…'}</div><div class="t">${x.out||'…'}</div>`:''}</div>`;
   }
   const weeks=[...new Set(days.map(monday))].sort();
   const wsum=(w,f)=>all.filter(d=>monday(d)===w).reduce((a,d)=>a+f(d),0);
@@ -363,44 +366,49 @@ async function saveContract(){
   hoursData.weeklyHours=v;hoursData.dailyHours=v/5;hoursData.localHolidays=l;await saveHours();toast('Salvato');render();
 }
 
-// pannello del giorno: tocchi un giorno del calendario
+// pannello del giorno: tocchi un giorno del calendario. Si può segnare anche solo l'entrata o solo l'uscita
 let sheet=null;
-function openDay(ds){sheet={ds,mode:hoursData.days[ds]?'view':'edit'};drawSheet()}
+function openDay(ds){const x=hoursData.days[ds];sheet={ds,mode:x?'view':'edit',sug:!x};drawSheet()}
 function closeSheet(){sheet=null;const e=$('sheet');if(e)e.remove()}
-function editSheet(){sheet.mode='edit';drawSheet()}
+function editSheet(sug){sheet.mode='edit';sheet.sug=!!sug;drawSheet()}
 function drawSheet(){
   let e=$('sheet');if(!e){e=document.createElement('div');e.id='sheet';document.body.appendChild(e)}
   const ds=sheet.ds,x=hoursData.days[ds];
   const title=new Date(ds+'T12:00:00').toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
   let body;
   if(sheet.mode==='view'){
-    const c=dayCalc(ds);
-    body=`<div class="kv"><span>Entrata</span><b>${x.in}</b></div><div class="kv"><span>Uscita</span><b>${x.out}</b></div><div class="kv"><span>Pausa pranzo</span><b>${x.lunch||0} min</b></div>
-    <div class="kv"><span>Ore lavorate</span><b>${fmt(c.tot)}</b></div>
-    ${isFest(ds)?`<div class="kv"><span>Giorno festivo</span><b>${fmt(c.fest)}</b></div>`:`<div class="kv"><span>Ordinarie</span><b>${fmt(c.ord)}</b></div><div class="kv"><span>Straordinario</span><b style="color:var(--acc)">${fmt(c.ot)}</b></div>`}
-    <div class="row" style="margin-top:14px"><button class="p" onclick="editSheet()">Modifica</button><button class="d" onclick="delDay()">Elimina</button></div>`;
+    const c=dayCalc(ds),done=x.in&&x.out;
+    body=`<div class="kv"><span>Entrata</span><b>${x.in||'—'}</b></div><div class="kv"><span>Uscita</span><b>${x.out||'non ancora segnata'}</b></div><div class="kv"><span>Pausa pranzo</span><b>${x.lunch||0} min</b></div>
+    ${done?`<div class="kv"><span>Ore lavorate</span><b>${fmt(c.tot)}</b></div>
+    ${isFest(ds)?`<div class="kv"><span>Giorno festivo</span><b>${fmt(c.fest)}</b></div>`:`<div class="kv"><span>Ordinarie</span><b>${fmt(c.ord)}</b></div><div class="kv"><span>Straordinario</span><b style="color:var(--acc)">${fmt(c.ot)}</b></div>`}`:'<div class="kv"><span>Ore lavorate</span><b>da calcolare</b></div>'}
+    ${x.in&&!x.out?'<button class="p" style="width:100%;margin-top:14px" onclick="editSheet(true)">Segna uscita</button>':''}
+    <div class="row" style="margin-top:${x.in&&!x.out?'8':'14'}px"><button ${done||!x.in?'class="p"':''} onclick="editSheet(false)">Modifica</button><button class="d" onclick="delDay()">Elimina</button></div>`;
   }else{
-    const type=k=>isFest(k)?'f':(new Date(k+'T12:00:00').getDay()===6?'s':'w'),keys=Object.keys(hoursData.days).sort(),same=keys.filter(k=>type(k)===type(ds)&&k!==ds);
-    const last=same.filter(k=>k<ds).pop()||same.pop()||keys.pop(),L=last?hoursData.days[last]:{in:'08:00',out:'17:00',lunch:60},v=x||L;
-    body=`<label>Entrata</label><div class="tm"><button onclick="step('e_in',-15)">−</button><input id="e_in" type="time" value="${v.in}"><button onclick="step('e_in',15)">+</button></div>
-    <label>Uscita</label><div class="tm"><button onclick="step('e_out',-15)">−</button><input id="e_out" type="time" value="${v.out}"><button onclick="step('e_out',15)">+</button></div>
-    <label>Pausa pranzo (minuti)</label><div class="tm"><button onclick="step('e_lunch',-15)">−</button><input id="e_lunch" type="number" min="0" value="${v.lunch??60}"><button onclick="step('e_lunch',15)">+</button></div>
-    ${x?'':'<p class="note" style="margin:0 0 10px">Partono gli orari di un giorno simile già segnato: se vanno bene tocca solo Salva.</p>'}
-    <button class="p" style="width:100%" onclick="saveDay()">Salva</button>`;
+    const type=k=>isFest(k)?'f':(new Date(k+'T12:00:00').getDay()===6?'s':'w'),keys=Object.keys(hoursData.days).filter(k=>hoursData.days[k].in&&hoursData.days[k].out).sort(),same=keys.filter(k=>type(k)===type(ds)&&k!==ds);
+    const last=same.filter(k=>k<ds).pop()||same.pop()||keys.pop(),L=last?hoursData.days[last]:{in:'08:00',out:'17:00',lunch:60};
+    const vin=x?(x.in||(sheet.sug?L.in:'')):L.in, vout=x?(x.out||(sheet.sug?L.out:'')):L.out, vl=x?x.lunch:L.lunch;
+    const fld=(id,lab,v)=>`<label>${lab}</label><div class="tm"><button onclick="step('${id}',-15)">−</button><input id="${id}" type="time" value="${v||''}"><button onclick="step('${id}',15)">+</button><button class="x" title="Svuota" onclick="$('${id}').value=''">✕</button></div>`;
+    body=fld('e_in','Entrata',vin)+fld('e_out','Uscita',vout)+
+    `<label>Pausa pranzo (minuti)</label><div class="tm"><button onclick="step('e_lunch',-15)">−</button><input id="e_lunch" type="number" min="0" value="${vl??60}"><button onclick="step('e_lunch',15)">+</button></div>
+    ${x?'':'<p class="note" style="margin:0 0 10px">Partono gli orari di un giorno simile già segnato. Puoi segnare anche solo l\'entrata e l\'uscita dopo.</p>'}
+    <button class="p" style="width:100%" onclick="saveDay()">Salva</button>
+    ${(!x||!x.in)?'<button style="width:100%;margin-top:8px" onclick="saveDay(\'in\')">Salva solo entrata</button>':''}`;
   }
   e.innerHTML=`<div class="bk" onclick="closeSheet()"></div><div class="pn"><div class="hd"><b style="text-transform:capitalize">${title}</b><button class="s" onclick="closeSheet()">✕</button></div>${body}</div>`;
 }
 function step(id,d){
   const el=$(id);
   if(id==='e_lunch'){el.value=Math.max(0,(+el.value||0)+d);return}
-  let m=((toMin(el.value||'08:00')+d)%1440+1440)%1440;
+  let m=((toMin(el.value||(id==='e_out'?'17:00':'08:00'))+d)%1440+1440)%1440;
   el.value=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
 }
-async function saveDay(){
-  const i=$('e_in').value,o=$('e_out').value,l=parseInt($('e_lunch').value||'0',10);
-  if(!i||!o)return toast('Servono entrata e uscita');
-  if(toMin(o)<=toMin(i))return toast("L'uscita deve essere dopo l'entrata");
-  if(toMin(o)-toMin(i)<=l)return toast('La pausa è più lunga del turno');
+async function saveDay(only){
+  const i=$('e_in').value,o=only==='in'?'':$('e_out').value,l=parseInt($('e_lunch').value||'0',10);
+  if(!i&&!o)return toast("Segna almeno l'entrata o l'uscita");
+  if(i&&o){
+    if(toMin(o)<=toMin(i))return toast("L'uscita deve essere dopo l'entrata");
+    if(toMin(o)-toMin(i)<=l)return toast('La pausa è più lunga del turno');
+  }
   hoursData.days[sheet.ds]={in:i,out:o,lunch:l};await saveHours();closeSheet();toast('Salvato');render();
 }
 async function delDay(){
