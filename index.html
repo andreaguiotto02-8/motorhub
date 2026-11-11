@@ -73,6 +73,25 @@ h2{font-size:18px;margin:16px 0 8px}
 .sec{background:var(--card);border-radius:14px;margin-bottom:10px;overflow:hidden}
 .sec h3{margin:0;padding:12px;font-size:15px;color:var(--acc)}
 .grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:10px 0}
+.cal{display:grid;grid-template-columns:repeat(7,1fr);gap:4px;margin:8px 0}
+.dh{text-align:center;font-size:11px;color:var(--mut);padding:2px 0}
+.cl{background:var(--card);border-radius:10px;min-height:70px;padding:5px 1px;text-align:center;cursor:pointer}
+.cl.bl{background:none;cursor:default}
+.cl .n{font-size:13px;color:var(--mut);margin-bottom:2px}
+.cl .t{font-size:11px;line-height:1.3}
+.cl.ok{background:#1f2a22}
+.cl.ok .n{color:var(--txt);font-weight:700}
+.cl.fs .n{color:var(--red)}
+.cl.td{outline:2px solid var(--acc)}
+#sheet{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;justify-content:flex-end}
+#sheet .bk{position:absolute;inset:0;background:#000a}
+#sheet .pn{position:relative;background:var(--card);border-radius:20px 20px 0 0;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom));max-height:90vh;overflow:auto}
+#sheet .hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:18px}
+.tm{display:flex;align-items:center;gap:8px;margin:4px 0 12px}
+.tm button{width:52px;padding:12px 0;font-size:22px;flex:none}
+.tm input{text-align:center;font-size:22px;margin:0;flex:1;min-width:0}
+.kv{display:flex;justify-content:space-between;padding:9px 0;border-top:1px solid #2c3541}
+.kv span{color:var(--mut)}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ok);color:#111;padding:10px 16px;border-radius:12px;font-weight:700;display:none;z-index:9}
 </style>
 </head>
@@ -94,7 +113,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='1.7';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='1.8';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -211,7 +230,6 @@ function render(){
   if(view.name==='editProc') return renderEditProc(hd,app);
   if(view.name==='menu') return renderMenu(hd,app);
   if(view.name==='hours') return renderHours(hd,app);
-  if(view.name==='editDay') return renderEditDay(hd,app);
   if(view.name==='slips') return renderSlips(hd,app);
   if(view.name==='slip') return renderSlip(hd,app);
   if(view.name==='addSlip') return renderAddSlip(hd,app);
@@ -315,25 +333,29 @@ function renderHours(hd,app){
   const key=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
   const label=new Date(Y,M-1,1).toLocaleDateString('it-IT',{month:'long',year:'numeric'});
   hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b><small class="v">v${APPV}</small></h1><button class="s" onclick="go('menu')">⋯</button></div>${tabs('hours')}`;
-  const ot=calcOT(),all=Object.keys(hoursData.days);
-  const days=all.filter(d=>d.startsWith(ym)).sort().reverse();
-  const tot=days.reduce((a,d)=>a+dayMin(hoursData.days[d]),0),otm=days.reduce((a,d)=>a+ot[d],0);
-  const weeks={};days.forEach(d=>(weeks[monday(d)]=weeks[monday(d)]||[]).push(d));
+  const all=Object.keys(hoursData.days),days=all.filter(d=>d.startsWith(ym)).sort();
+  const sum=k=>days.reduce((a,d)=>a+dayCalc(d)[k],0),tot=sum('tot'),otm=sum('ot'),festm=sum('fest');
+  const td=today(),dim=new Date(Y,M,0).getDate(),lead=(new Date(Y,M-1,1).getDay()+6)%7;
+  let cells=['Lun','Mar','Mer','Gio','Ven','Sab','Dom'].map(x=>`<div class="dh">${x}</div>`).join('')+'<div class="cl bl"></div>'.repeat(lead);
+  for(let i=1;i<=dim;i++){
+    const k=ym+'-'+String(i).padStart(2,'0'),x=hoursData.days[k];
+    cells+=`<div class="cl${x?' ok':''}${isFest(k)?' fs':''}${k===td?' td':''}" onclick="openDay('${k}')"><div class="n">${i}</div>${x?`<div class="t">${x.in}</div><div class="t">${x.out}</div>`:''}</div>`;
+  }
+  const weeks=[...new Set(days.map(monday))].sort();
   const wsum=(w,f)=>all.filter(d=>monday(d)===w).reduce((a,d)=>a+f(d),0);
-  const td=today();
-  const wd=ds=>new Date(ds+'T12:00:00').toLocaleDateString('it-IT',{weekday:'short'});
   app.innerHTML=`<div class="mnav"><button class="s" onclick="go('hours',{ym:'${key(new Date(Y,M-2,1))}'})">‹</button><b>${label}</b><button class="s" onclick="go('hours',{ym:'${key(new Date(Y,M,1))}'})">›</button></div>
-  <div class="grid"><div class="card"><div class="v">${fmt(dayMin(hoursData.days[td]))}</div><div class="l">Oggi</div></div>
+  <div class="grid"><div class="card"><div class="v">${fmt(dayCalc(td).tot)}</div><div class="l">Oggi</div></div>
   <div class="card"><div class="v">${fmt(tot)}</div><div class="l">Ore del mese</div></div>
   <div class="card ot"><div class="v">${fmt(otm)}</div><div class="l">Straord. mese</div></div></div>
-  <p class="note" style="margin:0 2px 6px">Ordinarie ${fmt(days.reduce((a,d)=>a+dayCalc(d).ord,0))} · Straordinari ${fmt(otm)}${days.some(d=>dayCalc(d).fest)?' · Festivi '+fmt(days.reduce((a,d)=>a+dayCalc(d).fest,0)):''}</p>
-  ${Object.keys(weeks).sort().reverse().map(w=>`<div class="wk"><span>Settimana dal ${w.slice(8)}/${w.slice(5,7)}</span><span>${fmt(wsum(w,d=>dayMin(hoursData.days[d])))} · straord. <b>${fmt(wsum(w,d=>ot[d]))}</b></span></div>`+weeks[w].map(d=>{const x=hoursData.days[d];return `<div class="day" onclick="go('editDay',{date:'${d}'})"><div class="dd">${+d.slice(8)}<small>${wd(d)}</small></div><div class="tt">${x.in} – ${x.out}<br>pausa ${x.lunch||0} min</div><div class="hh">${fmt(dayMin(x))}${dayCalc(d).fest?'<small>festivo</small>':ot[d]>0?`<small>+${fmt(ot[d])} straord.</small>`:''}</div></div>`}).join('')).join('')||'<div class="empty">Nessun giorno segnato in questo mese.</div>'}
+  <p class="note" style="margin:0 2px 6px">Ordinarie ${fmt(sum('ord'))} · Straordinari ${fmt(otm)}${festm?' · Festivi '+fmt(festm):''}</p>
+  <div class="cal">${cells}</div>
+  ${weeks.length?'<h2>Settimane</h2>'+weeks.map(w=>`<div class="wk"><span>Dal ${w.slice(8)}/${w.slice(5,7)}</span><span>${fmt(wsum(w,d=>dayCalc(d).tot))} · straord. <b>${fmt(wsum(w,d=>dayCalc(d).ot))}</b></span></div>`).join(''):''}
   <h2>Contratto</h2><label>Ore settimanali da contratto. Si dividono per i 5 giorni lun-ven (oggi ${+((+hoursData.weeklyHours||40)/5).toFixed(2)} ore al giorno): oltre sono straordinario; il sabato è tutto straordinario</label>
   <input id="dh" type="number" step="0.5" min="1" value="${esc(hoursData.weeklyHours)}">
   <label>Festività locali (giorno/mese, separate da virgola). Domeniche e festività nazionali sono già comprese</label>
   <input id="lh" value="${esc((hoursData.localHolidays||[]).map(x=>x.slice(3)+'/'+x.slice(0,2)).join(', '))}">
   <button style="width:100%" onclick="saveContract()">Salva</button>
-  <button class="p fab" onclick="go('editDay',{date:null})">+ Giorno</button>`;
+  <button class="p fab" onclick="openDay(today())">+ Oggi</button>`;
 }
 async function saveContract(){
   const v=parseFloat($('dh').value);if(!(v>0))return toast('Ore settimanali non valide');
@@ -341,27 +363,49 @@ async function saveContract(){
   hoursData.weeklyHours=v;hoursData.dailyHours=v/5;hoursData.localHolidays=l;await saveHours();toast('Salvato');render();
 }
 
-function renderEditDay(hd,app){
-  const d0=view.date,ex=d0?hoursData.days[d0]:null;
-  const last=Object.keys(hoursData.days).sort().pop(),lastLunch=last?hoursData.days[last].lunch:60;
-  hd.innerHTML=`<div class="top"><button class="back" onclick="go('hours',{ym:'${(d0||today()).slice(0,7)}'})">‹ Annulla</button><h1 style="text-align:right">${ex?'Modifica giorno':'Segna giorno'}</h1></div>`;
-  app.innerHTML=`<label>Data</label><input id="d_date" type="date" value="${d0||today()}">
-  <div class="row"><div><label>Entrata</label><input id="d_in" type="time" value="${ex?ex.in:''}"></div><div><label>Uscita</label><input id="d_out" type="time" value="${ex?ex.out:''}"></div></div>
-  <label>Pausa pranzo (minuti)</label><input id="d_lunch" type="number" min="0" step="5" value="${ex?ex.lunch:(lastLunch??60)}">
-  <button class="p" style="width:100%" onclick="saveDay()">Salva</button>
-  ${ex?'<button class="d" style="width:100%;margin-top:14px" onclick="delDay()">Elimina giorno</button>':''}`;
+// pannello del giorno: tocchi un giorno del calendario
+let sheet=null;
+function openDay(ds){sheet={ds,mode:hoursData.days[ds]?'view':'edit'};drawSheet()}
+function closeSheet(){sheet=null;const e=$('sheet');if(e)e.remove()}
+function editSheet(){sheet.mode='edit';drawSheet()}
+function drawSheet(){
+  let e=$('sheet');if(!e){e=document.createElement('div');e.id='sheet';document.body.appendChild(e)}
+  const ds=sheet.ds,x=hoursData.days[ds];
+  const title=new Date(ds+'T12:00:00').toLocaleDateString('it-IT',{weekday:'long',day:'numeric',month:'long'});
+  let body;
+  if(sheet.mode==='view'){
+    const c=dayCalc(ds);
+    body=`<div class="kv"><span>Entrata</span><b>${x.in}</b></div><div class="kv"><span>Uscita</span><b>${x.out}</b></div><div class="kv"><span>Pausa pranzo</span><b>${x.lunch||0} min</b></div>
+    <div class="kv"><span>Ore lavorate</span><b>${fmt(c.tot)}</b></div>
+    ${isFest(ds)?`<div class="kv"><span>Giorno festivo</span><b>${fmt(c.fest)}</b></div>`:`<div class="kv"><span>Ordinarie</span><b>${fmt(c.ord)}</b></div><div class="kv"><span>Straordinario</span><b style="color:var(--acc)">${fmt(c.ot)}</b></div>`}
+    <div class="row" style="margin-top:14px"><button class="p" onclick="editSheet()">Modifica</button><button class="d" onclick="delDay()">Elimina</button></div>`;
+  }else{
+    const type=k=>isFest(k)?'f':(new Date(k+'T12:00:00').getDay()===6?'s':'w'),keys=Object.keys(hoursData.days).sort(),same=keys.filter(k=>type(k)===type(ds)&&k!==ds);
+    const last=same.filter(k=>k<ds).pop()||same.pop()||keys.pop(),L=last?hoursData.days[last]:{in:'08:00',out:'17:00',lunch:60},v=x||L;
+    body=`<label>Entrata</label><div class="tm"><button onclick="step('e_in',-15)">−</button><input id="e_in" type="time" value="${v.in}"><button onclick="step('e_in',15)">+</button></div>
+    <label>Uscita</label><div class="tm"><button onclick="step('e_out',-15)">−</button><input id="e_out" type="time" value="${v.out}"><button onclick="step('e_out',15)">+</button></div>
+    <label>Pausa pranzo (minuti)</label><div class="tm"><button onclick="step('e_lunch',-15)">−</button><input id="e_lunch" type="number" min="0" value="${v.lunch??60}"><button onclick="step('e_lunch',15)">+</button></div>
+    ${x?'':'<p class="note" style="margin:0 0 10px">Partono gli orari di un giorno simile già segnato: se vanno bene tocca solo Salva.</p>'}
+    <button class="p" style="width:100%" onclick="saveDay()">Salva</button>`;
+  }
+  e.innerHTML=`<div class="bk" onclick="closeSheet()"></div><div class="pn"><div class="hd"><b style="text-transform:capitalize">${title}</b><button class="s" onclick="closeSheet()">✕</button></div>${body}</div>`;
+}
+function step(id,d){
+  const el=$(id);
+  if(id==='e_lunch'){el.value=Math.max(0,(+el.value||0)+d);return}
+  let m=((toMin(el.value||'08:00')+d)%1440+1440)%1440;
+  el.value=String(Math.floor(m/60)).padStart(2,'0')+':'+String(m%60).padStart(2,'0');
 }
 async function saveDay(){
-  const date=$('d_date').value,i=$('d_in').value,o=$('d_out').value,l=parseInt($('d_lunch').value||'0',10);
-  if(!date||!i||!o)return toast('Servono data, entrata e uscita');
+  const i=$('e_in').value,o=$('e_out').value,l=parseInt($('e_lunch').value||'0',10);
+  if(!i||!o)return toast('Servono entrata e uscita');
   if(toMin(o)<=toMin(i))return toast("L'uscita deve essere dopo l'entrata");
   if(toMin(o)-toMin(i)<=l)return toast('La pausa è più lunga del turno');
-  if(view.date&&view.date!==date)delete hoursData.days[view.date];
-  hoursData.days[date]={in:i,out:o,lunch:l};await saveHours();toast('Salvato');go('hours',{ym:date.slice(0,7)});
+  hoursData.days[sheet.ds]={in:i,out:o,lunch:l};await saveHours();closeSheet();toast('Salvato');render();
 }
 async function delDay(){
   if(!confirm('Eliminare questo giorno?'))return;
-  delete hoursData.days[view.date];await saveHours();go('hours',{ym:view.date.slice(0,7)});
+  delete hoursData.days[sheet.ds];await saveHours();closeSheet();render();
 }
 
 // ---------- Buste paga ----------
