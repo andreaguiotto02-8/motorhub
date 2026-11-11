@@ -65,6 +65,13 @@ h2{font-size:18px;margin:16px 0 8px}
 .day .tt{flex:1;font-size:14px;color:var(--mut)}
 .day .hh{font-weight:700;text-align:right}
 .day .hh small{display:block;color:var(--acc);font-size:12px}
+.it{display:flex;gap:8px;align-items:flex-start;padding:10px 12px;border-top:1px solid #232a33}
+.it .l{flex:1;color:var(--mut);font-size:14px}
+.it b{text-align:right}
+.it .rp{color:var(--mut);padding:0 4px;cursor:pointer}
+.sec{background:var(--card);border-radius:14px;margin-bottom:10px;overflow:hidden}
+.sec h3{margin:0;padding:12px;font-size:15px;color:var(--acc)}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;margin:10px 0}
 #toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ok);color:#111;padding:10px 16px;border-radius:12px;font-weight:700;display:none;z-index:9}
 </style>
 </head>
@@ -86,15 +93,18 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='1.2';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='1.3';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
 
 // ---------- Orari di lavoro ----------
 let hoursData={weeklyHours:40,days:{}};   // days: {'2026-11-11':{in:'07:30',out:'16:30',lunch:60}}
+let payslips=[],slipData={},reports=[];   // buste: {id,ym,name}; dati letti dalla pianificata; segnalazioni di errore
+const saveSlips=async()=>{await dbSet('payslips',payslips);schedulePush()};
+const saveReports=async()=>{await dbSet('reports',reports);schedulePush()};
 const saveHours=async()=>{await dbSet('hours',hoursData);schedulePush()};
-const tabs=a=>`<div class="chips" style="margin-top:6px"><div class="chip ${a==='list'?'on':''}" onclick="go('list')">Motori</div><div class="chip ${a==='hours'?'on':''}" onclick="go('hours')">Orari</div></div>`;
+const tabs=a=>`<div class="chips" style="margin-top:6px"><div class="chip ${a==='list'?'on':''}" onclick="go('list')">Motori</div><div class="chip ${a==='hours'?'on':''}" onclick="go('hours')">Orari</div><div class="chip ${a==='slips'?'on':''}" onclick="go('slips')">Buste</div></div>`;
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
 const toMin=t=>{if(!t)return 0;const [h,m]=t.split(':').map(Number);return h*60+m};
 const dayMin=d=>d&&d.in&&d.out?Math.max(0,toMin(d.out)-toMin(d.in)-(+d.lunch||0)):0;
@@ -138,6 +148,8 @@ async function pushState(){
   try{
     await ghPut('state.json',toB64(JSON.stringify({app:'motorhub',appVersion:APPV,updated:new Date().toISOString(),motors},null,1)),'Dati app');
     await ghPut('hours.json',toB64(JSON.stringify({appVersion:APPV,updated:new Date().toISOString(),...hoursData},null,1)),'Orari');
+    await ghPut('payslips.json',toB64(JSON.stringify({appVersion:APPV,payslips},null,1)),'Elenco buste');
+    await ghPut('reports.json',toB64(JSON.stringify({appVersion:APPV,reports},null,1)),'Segnalazioni');
     await ghPut('usage.json',toB64(JSON.stringify({appVersion:APPV,events:usage},null,1)),'Registro uso');
     cfg.lastSync=new Date().toISOString();saveCfg();return true;
   }catch(e){log('error','sync: '+e.message);return false}
@@ -146,6 +158,11 @@ async function pullUpdates(){
   if(!cfg.token)return false;
   try{
     const st=await ghRaw('status.json');if(st){try{cfg.status=JSON.parse(st);saveCfg()}catch{}}
+    const rs=await ghRaw('reports_status.json');
+    if(rs){try{const m=JSON.parse(rs);let ch=false;reports.forEach(r=>{const x=m[r.id];if(x&&(x.status!==r.status||x.reply!==r.reply)){r.status=x.status;r.reply=x.reply||'';ch=true}});if(ch)await dbSet('reports',reports)}catch{}}
+    const sl=await gh('extracted_buste');
+    if(sl.ok){for(const f of await sl.json()){if(!f.name.endsWith('.json'))continue;const id=f.name.slice(0,-5);if(!payslips.find(x=>x.id===id))continue;try{slipData[id]=JSON.parse(await ghRaw(f.path))}catch{}}await dbSet('slipData',slipData)}
+    if(['slips','slip','menu'].includes(view.name))render();
     const r=await gh('extracted');if(!r.ok)return r.status===404;
     let changed=false;
     for(const f of await r.json()){
@@ -186,6 +203,10 @@ function render(){
   if(view.name==='menu') return renderMenu(hd,app);
   if(view.name==='hours') return renderHours(hd,app);
   if(view.name==='editDay') return renderEditDay(hd,app);
+  if(view.name==='slips') return renderSlips(hd,app);
+  if(view.name==='slip') return renderSlip(hd,app);
+  if(view.name==='addSlip') return renderAddSlip(hd,app);
+  if(view.name==='report') return renderReport(hd,app);
 }
 
 function renderList(hd,app){
@@ -225,7 +246,7 @@ function renderMotor(hd,app){
   <input type="file" id="pdfIn" accept="application/pdf" hidden>
   <h2>Procedure</h2>
   ${m.procs.map(p=>`<details class="proc"><summary>${esc(p.title)}${p.source==='pdf'?' <span class="tag pdf">dal PDF</span>':''}</summary><ol>${p.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
-    <div class="act"><button class="s" onclick="go('editProc',{id:'${m.id}',pid:'${p.id}'})">Modifica</button><button class="s d" onclick="delProc('${p.id}')">Elimina</button></div></details>`).join('')||'<div class="empty" style="margin:20px 0">Nessuna procedura ancora.</div>'}
+    <div class="act"><button class="s" onclick="go('editProc',{id:'${m.id}',pid:'${p.id}'})">Modifica</button><button class="s d" onclick="delProc('${p.id}')">Elimina</button><button class="s" onclick="reportProc('${p.id}')">⚠ Segnala errore</button></div></details>`).join('')||'<div class="empty" style="margin:20px 0">Nessuna procedura ancora.</div>'}
   <button class="p fab" onclick="go('editProc',{id:'${m.id}',pid:null})">+ Procedura</button>`;
   $('pdfIn').onchange=async e=>{const f=e.target.files[0];if(!f)return;await dbSet('pdf:'+m.id,f);m.hasPdf=true;m.pdfName=f.name;await save();toast('PDF salvato');render();uploadPdf(m.id,f)};
 }
@@ -326,6 +347,64 @@ async function delDay(){
   delete hoursData.days[view.date];await saveHours();go('hours',{ym:view.date.slice(0,7)});
 }
 
+// ---------- Buste paga ----------
+const monthLabel=ym=>new Date(ym+'-01T12:00:00').toLocaleDateString('it-IT',{month:'long',year:'numeric'});
+function renderSlips(hd,app){
+  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b></h1><button class="s" onclick="go('menu')">⋯</button></div>${tabs('slips')}`;
+  const l=[...payslips].sort((a,b)=>b.ym.localeCompare(a.ym));
+  app.innerHTML=(l.map(p=>{const d=slipData[p.id];return `<div class="item" onclick="go('slip',{id:'${p.id}'})"><div class="m" style="text-transform:capitalize">${monthLabel(p.ym)}</div>
+   ${d?(d.highlights||[]).map(h=>`<span class="tag">${esc(h.label)}: <b>${esc(h.value)}</b></span>`).join(''):'<span class="tag">in attesa di lettura</span>'}</div>`}).join('')||'<div class="empty">Nessuna busta paga.<br>Premi “+ Busta” per caricarla.</div>')+`<button class="p fab" onclick="go('addSlip')">+ Busta</button>`;
+}
+function renderAddSlip(hd,app){
+  hd.innerHTML=`<div class="top"><button class="back" onclick="go('slips')">‹ Annulla</button><h1 style="text-align:right">Nuova busta paga</h1></div>`;
+  const d=new Date();d.setMonth(d.getMonth()-1);
+  app.innerHTML=`<label>Mese a cui si riferisce</label><input id="s_ym" type="month" value="${d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')}">
+  <label>File PDF della busta</label><input id="s_file" type="file" accept="application/pdf">
+  <button class="p" style="width:100%" onclick="saveSlip()">Carica</button>`;
+}
+async function saveSlip(){
+  const ym=$('s_ym').value,f=$('s_file').files[0];
+  if(!ym||!f)return toast('Servono mese e file PDF');
+  const ex=payslips.find(x=>x.ym===ym);
+  if(ex&&!confirm('Esiste già una busta per questo mese. Sostituirla?'))return;
+  const id=ex?ex.id:uid();
+  await dbSet('slip:'+id,f);
+  if(!ex)payslips.push({id,ym,name:f.name});else{ex.name=f.name;delete slipData[id]}
+  await saveSlips();toast('Busta salvata');
+  if(cfg.token)try{await ghPut('buste/'+id+'.pdf',await fileB64(f),'Busta '+ym);toast('Busta inviata per la lettura automatica')}catch(e){log('error','busta: '+e.message);toast('Busta non inviata (controlla la chiave)')}
+  go('slip',{id});
+}
+function renderSlip(hd,app){
+  const p=payslips.find(x=>x.id===view.id);if(!p)return go('slips');
+  const d=slipData[p.id];
+  hd.innerHTML=`<div class="top"><button class="back" onclick="go('slips')">‹ Indietro</button><h1 style="text-align:right;text-transform:capitalize">${monthLabel(p.ym)}</h1></div>`;
+  app.innerHTML=`<div class="row" style="margin:10px 0"><button class="p" onclick="openSlip()">📄 Apri busta</button><button class="d" onclick="delSlip()">Elimina</button></div>`+
+  (!d?'<div class="banner">Busta non ancora letta. La pianificata la legge in serata e i dati compaiono qui.</div>':
+   (d.highlights&&d.highlights.length?`<div class="grid2">${d.highlights.map(h=>`<div class="card"><div class="v">${esc(h.value)}</div><div class="l">${esc(h.label)}</div></div>`).join('')}</div>`:'')+
+   (d.problems&&d.problems.length?`<div class="banner">${d.problems.map(x=>'⚠ '+esc(x)).join('<br>')}</div>`:'')+
+   (d.sections||[]).map((sc,si)=>`<div class="sec"><h3>${esc(sc.title)}</h3>${(sc.items||[]).map((it,ii)=>`<div class="it"><span class="l">${esc(it.label)}${it.note?`<br><small>${esc(it.note)}</small>`:''}</span><b>${esc(it.value)}</b><span class="rp" title="Segnala errore" onclick="reportSlip('${p.id}',${si},${ii})">⚠</span></div>`).join('')}</div>`).join('')+
+   `<button style="width:100%" onclick="reportCtx('Busta ${p.id} (${p.ym}) / in generale')">⚠ Segnala un errore in questa busta</button>`);
+}
+async function openSlip(){const f=await dbGet('slip:'+view.id);if(!f)return toast('PDF non trovato su questo telefono');const u=URL.createObjectURL(f);window.open(u,'_blank')||(location.href=u)}
+async function delSlip(){
+  if(!confirm('Eliminare questa busta dall\'app? La copia su Drive resta.'))return;
+  const id=view.id;payslips=payslips.filter(x=>x.id!==id);delete slipData[id];await dbDel('slip:'+id);await dbSet('slipData',slipData);await saveSlips();go('slips');
+}
+
+// ---------- Segnalazioni di errore ----------
+function reportSlip(id,si,ii){const p=payslips.find(x=>x.id===id),it=slipData[id].sections[si].items[ii];reportCtx(`Busta ${id} (${p.ym}) / ${slipData[id].sections[si].title} / ${it.label} = ${it.value}`)}
+function reportProc(pid){const m=motors.find(x=>x.id===view.id),p=m.procs.find(x=>x.id===pid);reportCtx(`Motore ${m.id} (${m.brand} ${m.model}) / procedura ${p.id} "${p.title}"`)}
+function reportCtx(ctx){go('report',{ctx,back:view})}
+function renderReport(hd,app){
+  hd.innerHTML=`<div class="top"><button class="back" onclick="view=view.back;render()">‹ Annulla</button><h1 style="text-align:right">Segnala errore</h1></div>`;
+  app.innerHTML=`<p class="note">${esc(view.ctx)}</p><label>Cosa non va? Scrivi cosa dovrebbe essere</label><textarea id="r_note" placeholder="es. Le ferie residue sono 12,5 giorni, non 8"></textarea><button class="p" style="width:100%" onclick="saveReport()">Invia segnalazione</button>`;
+}
+async function saveReport(){
+  const note=$('r_note').value.trim();if(!note)return toast('Scrivi cosa non va');
+  reports.push({id:uid(),t:new Date().toISOString(),ctx:view.ctx,note,status:'aperta',reply:''});
+  await saveReports();toast('Segnalazione inviata');view=view.back;render();
+}
+
 function renderMenu(hd,app){
   hd.innerHTML=`<div class="top"><button class="back" onclick="go('list')">‹ Indietro</button><h1 style="text-align:right">Menu</h1></div>`;
   const dl=daysLeft(),stt=cfg.status;
@@ -338,6 +417,9 @@ function renderMenu(hd,app){
   ${cfg.token&&dl!==null?`<div class="banner ${dl>30?'ok':''}">${dl<0?'Chiave scaduta.':'Chiave valida ancora per '+dl+' giorni.'}</div>`:''}
   ${cfg.lastSync?`<p class="note">Ultimo invio dati: ${new Date(cfg.lastSync).toLocaleString('it-IT')}</p>`:''}
   ${stt?`<div class="banner ${stt.problems&&stt.problems.length?'':'ok'}"><b>Ultimo controllo automatico${stt.lastRun?' ('+new Date(stt.lastRun).toLocaleDateString('it-IT')+')':''}</b><br>${esc(stt.summary||'')}${(stt.problems||[]).map(x=>'<br>⚠ '+esc(x)).join('')}</div>`:''}
+  <h2>Segnalazioni</h2>
+  ${[...reports].sort((a,b)=>b.t.localeCompare(a.t)).slice(0,8).map(r=>`<div class="banner ${r.status==='risolta'?'ok':''}"><b>${r.status==='risolta'?'Risolta':r.status==='aperta'?'In attesa':esc(r.status)}</b> · ${esc(r.note)}${r.reply?'<br>'+esc(r.reply):''}</div>`).join('')||'<p class="note">Nessuna segnalazione.</p>'}
+  <button style="width:100%" onclick="reportCtx('Generale (app)')">⚠ Segnala un problema dell'app</button>
   <h2>Copia di sicurezza</h2>
   <p class="note">Salva motori, procedure e orari in un file. I PDF non sono inclusi.</p>
   <button class="p" style="width:100%" onclick="exportData()">Esporta dati</button>
@@ -371,6 +453,7 @@ function exportData(){
   motors=(await dbGet('motors'))||[];
   cfg={...cfg,...((await dbGet('cfg'))||{})};
   usage=(await dbGet('usage'))||[];
+  payslips=(await dbGet('payslips'))||[];slipData=(await dbGet('slipData'))||{};reports=(await dbGet('reports'))||[];
   hoursData={...hoursData,...((await dbGet('hours'))||{})};
   log('apertura');
   render();
