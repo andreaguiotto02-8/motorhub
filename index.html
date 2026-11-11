@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#111418">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>MotorHub</title>
+<style>
+:root{--bg:#111418;--card:#1b2027;--card2:#242b34;--txt:#eef1f5;--mut:#8b96a5;--acc:#ff7a1a;--ok:#3ecf8e;--red:#ff5d5d}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.4 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding-bottom:90px}
+header{position:sticky;top:0;z-index:5;background:var(--bg);padding:12px 14px 8px;border-bottom:1px solid #232a33}
+.top{display:flex;align-items:center;gap:10px}
+h1{font-size:20px;margin:0;flex:1}
+h1 b{color:var(--acc)}
+button{font:inherit;color:var(--txt);background:var(--card2);border:0;border-radius:12px;padding:12px 16px;cursor:pointer}
+button.p{background:var(--acc);color:#111;font-weight:700}
+button.d{color:var(--red)}
+button.s{padding:8px 12px;font-size:14px}
+input,textarea,select{width:100%;font:inherit;color:var(--txt);background:var(--card);border:1px solid #2c3541;border-radius:12px;padding:12px;margin:4px 0 10px}
+textarea{min-height:130px;resize:vertical}
+label{font-size:13px;color:var(--mut)}
+#q{margin:10px 0 6px}
+.chips{display:flex;gap:8px;overflow-x:auto;padding-bottom:6px}
+.chip{flex:none;padding:8px 14px;border-radius:20px;background:var(--card);color:var(--mut);font-size:14px}
+.chip.on{background:var(--acc);color:#111;font-weight:700}
+main{padding:12px 14px}
+.item{background:var(--card);border-radius:14px;padding:14px;margin-bottom:10px}
+.item .m{font-weight:700;font-size:17px}
+.item .b{color:var(--mut);font-size:14px}
+.tag{display:inline-block;font-size:12px;background:var(--card2);color:var(--mut);border-radius:8px;padding:2px 8px;margin:6px 6px 0 0}
+.tag.pdf{color:var(--acc)}
+.empty{text-align:center;color:var(--mut);margin-top:50px}
+.proc{background:var(--card);border-radius:14px;margin-bottom:10px;overflow:hidden}
+.proc summary{padding:14px;font-weight:700;cursor:pointer;list-style:none}
+.proc summary::-webkit-details-marker{display:none}
+.proc summary:after{content:"▾";float:right;color:var(--mut)}
+.proc[open] summary:after{content:"▴"}
+.proc ol{margin:0;padding:0 14px 6px 38px}
+.proc li{padding:6px 0;border-top:1px solid #232a33}
+.proc .act{display:flex;gap:8px;padding:8px 14px 14px}
+.row{display:flex;gap:8px}
+.row>*{flex:1}
+h2{font-size:18px;margin:16px 0 8px}
+.fab{position:fixed;right:16px;bottom:calc(16px + env(safe-area-inset-bottom));box-shadow:0 4px 14px #0008;border-radius:30px;padding:16px 22px}
+.note{color:var(--mut);font-size:14px;white-space:pre-wrap}
+.back{background:none;padding:8px 4px;color:var(--acc)}
+#toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--ok);color:#111;padding:10px 16px;border-radius:12px;font-weight:700;display:none;z-index:9}
+</style>
+</head>
+<body>
+<header id="hd"></header>
+<main id="app"></main>
+<div id="toast"></div>
+
+<script>
+// ---------- Archivio (IndexedDB) ----------
+const DB='motorhub',ST='kv';
+const idb=()=>new Promise((ok,ko)=>{const r=indexedDB.open(DB,1);r.onupgradeneeded=()=>r.result.createObjectStore(ST);r.onsuccess=()=>ok(r.result);r.onerror=()=>ko(r.error)});
+const dbGet=async k=>{const d=await idb();return new Promise(ok=>{const q=d.transaction(ST).objectStore(ST).get(k);q.onsuccess=()=>ok(q.result)})};
+const dbSet=async(k,v)=>{const d=await idb();return new Promise(ok=>{const t=d.transaction(ST,'readwrite');t.objectStore(ST).put(v,k);t.oncomplete=ok})};
+const dbDel=async k=>{const d=await idb();return new Promise(ok=>{const t=d.transaction(ST,'readwrite');t.objectStore(ST).delete(k);t.oncomplete=ok})};
+
+let motors=[];            // {id,brand,model,type,notes,hasPdf,procs:[{id,title,steps:[]}]}
+let view={name:'list'};   // list | motor | editMotor | editProc | menu
+let q='',brandF='';
+
+const save=()=>dbSet('motors',motors);
+const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function toast(t){const e=document.getElementById('toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',1800)}
+const $=id=>document.getElementById(id);
+
+// ---------- Schermate ----------
+function render(){
+  const hd=$('hd'),app=$('app');
+  if(view.name==='list') return renderList(hd,app);
+  if(view.name==='motor') return renderMotor(hd,app);
+  if(view.name==='editMotor') return renderEditMotor(hd,app);
+  if(view.name==='editProc') return renderEditProc(hd,app);
+  if(view.name==='menu') return renderMenu(hd,app);
+}
+
+function renderList(hd,app){
+  const brands=[...new Set(motors.map(m=>m.brand).filter(Boolean))].sort();
+  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b></h1><button class="s" onclick="go('menu')">⋯</button></div>
+  <input id="q" type="search" placeholder="Cerca motore, marca o procedura…" value="${esc(q)}">
+  <div class="chips"><div class="chip ${brandF?'':'on'}" onclick="setBrand('')">Tutti</div>${brands.map(b=>`<div class="chip ${brandF===b?'on':''}" onclick="setBrand('${esc(b)}')">${esc(b)}</div>`).join('')}</div>`;
+  $('q').oninput=e=>{q=e.target.value;list()};
+  app.innerHTML='<div id="lst"></div><button class="p fab" onclick="newMotor()">+ Motore</button>';
+  list();
+}
+function list(){
+  const t=q.toLowerCase().trim();
+  const r=motors.filter(m=>(!brandF||m.brand===brandF)&&(!t||[m.brand,m.model,m.type,m.notes,...m.procs.map(p=>p.title+' '+p.steps.join(' '))].join(' ').toLowerCase().includes(t)))
+    .sort((a,b)=>(a.brand+a.model).localeCompare(b.brand+b.model));
+  $('lst').innerHTML=r.length?r.map(m=>`<div class="item" onclick="openMotor('${m.id}')"><div class="m">${esc(m.model)}</div><div class="b">${esc(m.brand)}${m.type?' · '+esc(m.type):''}</div>
+   <span class="tag">${m.procs.length} procedure</span>${m.hasPdf?'<span class="tag pdf">PDF</span>':''}</div>`).join('')
+   :`<div class="empty">${motors.length?'Nessun risultato':'Nessun motore.<br>Premi “+ Motore” per iniziare.'}</div>`;
+}
+function setBrand(b){brandF=b;render()}
+function go(n,extra={}){view={name:n,...extra};render();scrollTo(0,0)}
+function openMotor(id){go('motor',{id})}
+
+function renderMotor(hd,app){
+  const m=motors.find(x=>x.id===view.id);if(!m)return go('list');
+  hd.innerHTML=`<div class="top"><button class="back" onclick="go('list')">‹ Indietro</button><h1 style="text-align:right">${esc(m.model)}</h1></div>`;
+  app.innerHTML=`<div class="b" style="color:var(--mut)">${esc(m.brand)}${m.type?' · '+esc(m.type):''}</div>
+  ${m.notes?`<p class="note">${esc(m.notes)}</p>`:''}
+  <div class="row" style="margin:10px 0">
+    ${m.hasPdf?'<button class="p" onclick="openPdf()">📄 Apri PDF</button>':''}
+    <button onclick="pickPdf()">${m.hasPdf?'Cambia PDF':'📎 Allega PDF'}</button>
+    <button onclick="go('editMotor',{id:'${m.id}'})">Modifica</button>
+  </div>
+  <input type="file" id="pdfIn" accept="application/pdf" hidden>
+  <h2>Procedure</h2>
+  ${m.procs.map(p=>`<details class="proc"><summary>${esc(p.title)}</summary><ol>${p.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
+    <div class="act"><button class="s" onclick="go('editProc',{id:'${m.id}',pid:'${p.id}'})">Modifica</button><button class="s d" onclick="delProc('${p.id}')">Elimina</button></div></details>`).join('')||'<div class="empty" style="margin:20px 0">Nessuna procedura ancora.</div>'}
+  <button class="p fab" onclick="go('editProc',{id:'${m.id}',pid:null})">+ Procedura</button>`;
+  $('pdfIn').onchange=async e=>{const f=e.target.files[0];if(!f)return;await dbSet('pdf:'+m.id,f);m.hasPdf=true;m.pdfName=f.name;await save();toast('PDF salvato');render()};
+}
+function pickPdf(){$('pdfIn').click()}
+async function openPdf(){
+  const f=await dbGet('pdf:'+view.id);if(!f)return toast('PDF non trovato');
+  const url=URL.createObjectURL(f);window.open(url,'_blank')||(location.href=url);
+}
+async function delProc(pid){
+  if(!confirm('Eliminare questa procedura?'))return;
+  const m=motors.find(x=>x.id===view.id);m.procs=m.procs.filter(p=>p.id!==pid);await save();render();
+}
+
+function renderEditMotor(hd,app){
+  const m=motors.find(x=>x.id===view.id)||{brand:'',model:'',type:'',notes:''};
+  hd.innerHTML=`<div class="top"><button class="back" onclick="${view.id?`openMotor('${view.id}')`:`go('list')`}">‹ Annulla</button><h1 style="text-align:right">${view.id?'Modifica motore':'Nuovo motore'}</h1></div>`;
+  const brands=[...new Set(motors.map(x=>x.brand).filter(Boolean))];
+  app.innerHTML=`<label>Marca</label><input id="f_brand" list="bl" value="${esc(m.brand)}" placeholder="es. Nice, Somfy"><datalist id="bl">${brands.map(b=>`<option value="${esc(b)}">`).join('')}</datalist>
+  <label>Modello</label><input id="f_model" value="${esc(m.model)}" placeholder="es. Era M 30/17">
+  <label>Tipo (opzionale)</label><input id="f_type" value="${esc(m.type)}" placeholder="es. Tenda da sole, Tapparella, Radio, Filare">
+  <label>Note (opzionale)</label><textarea id="f_notes" style="min-height:90px">${esc(m.notes)}</textarea>
+  <button class="p" style="width:100%" onclick="saveMotor()">Salva</button>
+  ${view.id?'<button class="d" style="width:100%;margin-top:14px" onclick="delMotor()">Elimina motore</button>':''}`;
+}
+async function saveMotor(){
+  const brand=$('f_brand').value.trim(),model=$('f_model').value.trim();
+  if(!brand||!model)return toast('Servono marca e modello');
+  let m=motors.find(x=>x.id===view.id);
+  if(!m){m={id:uid(),procs:[],hasPdf:false};motors.push(m)}
+  Object.assign(m,{brand,model,type:$('f_type').value.trim(),notes:$('f_notes').value.trim()});
+  await save();toast('Salvato');go('motor',{id:m.id});
+}
+async function delMotor(){
+  if(!confirm('Eliminare il motore con tutte le sue procedure e il PDF?'))return;
+  motors=motors.filter(x=>x.id!==view.id);await dbDel('pdf:'+view.id);await save();go('list');
+}
+function newMotor(){go('editMotor',{id:null})}
+
+function renderEditProc(hd,app){
+  const m=motors.find(x=>x.id===view.id);const p=m.procs.find(x=>x.id===view.pid)||{title:'',steps:[]};
+  hd.innerHTML=`<div class="top"><button class="back" onclick="openMotor('${m.id}')">‹ Annulla</button><h1 style="text-align:right">${view.pid?'Modifica procedura':'Nuova procedura'}</h1></div>`;
+  app.innerHTML=`<label>Titolo</label><input id="p_title" value="${esc(p.title)}" placeholder="es. Impostazione fine corsa">
+  <label>Passi (uno per riga, il numero lo metto io)</label>
+  <textarea id="p_steps" placeholder="Premi il tasto P2 per 5 secondi&#10;Il motore fa un breve movimento&#10;…">${esc(p.steps.join('\n'))}</textarea>
+  <button class="p" style="width:100%" onclick="saveProc()">Salva</button>`;
+}
+async function saveProc(){
+  const title=$('p_title').value.trim();const steps=$('p_steps').value.split('\n').map(s=>s.trim().replace(/^\d+[.)]\s*/,'')).filter(Boolean);
+  if(!title||!steps.length)return toast('Servono titolo e almeno un passo');
+  const m=motors.find(x=>x.id===view.id);let p=m.procs.find(x=>x.id===view.pid);
+  if(!p){p={id:uid()};m.procs.push(p)}
+  p.title=title;p.steps=steps;await save();toast('Salvato');go('motor',{id:m.id});
+}
+
+function renderMenu(hd,app){
+  hd.innerHTML=`<div class="top"><button class="back" onclick="go('list')">‹ Indietro</button><h1 style="text-align:right">Menu</h1></div>`;
+  app.innerHTML=`<h2>Copia di sicurezza</h2>
+  <p class="note">Salva tutti i motori e le procedure in un file. I PDF non sono inclusi.</p>
+  <button class="p" style="width:100%" onclick="exportData()">Esporta dati</button>
+  <button style="width:100%;margin-top:10px" onclick="$('imp').click()">Importa dati</button>
+  <input type="file" id="imp" accept="application/json" hidden>
+  <p class="note" style="margin-top:24px">MotorHub · si aggiorna da solo a ogni avvio</p>`;
+  $('imp').onchange=async e=>{
+    const f=e.target.files[0];if(!f)return;
+    try{const d=JSON.parse(await f.text());if(!Array.isArray(d.motors))throw 0;
+      if(!confirm('Sostituire i dati attuali con quelli del file?'))return;
+      motors=d.motors;await save();toast('Dati importati');go('list')}catch{toast('File non valido')}
+  };
+}
+function exportData(){
+  const b=new Blob([JSON.stringify({app:'motorhub',date:new Date().toISOString(),motors},null,1)],{type:'application/json'});
+  const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download='motorhub-dati.json';a.click();
+}
+
+// ---------- Avvio e aggiornamento automatico ----------
+(async()=>{
+  motors=(await dbGet('motors'))||[];
+  render();
+  if('serviceWorker' in navigator){
+    let had=!!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange',()=>{if(had)location.reload();had=true});
+    navigator.serviceWorker.register('sw.js').then(r=>r.update()).catch(()=>{});
+  }
+})();
+</script>
+</body>
+</html>
