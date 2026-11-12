@@ -117,7 +117,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='2.0';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='2.1';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -252,7 +252,7 @@ function renderList(hd,app){
   <div class="chips"><div class="chip ${brandF?'':'on'}" onclick="setBrand('')">Tutti</div>${brands.map(b=>`<div class="chip ${brandF===b?'on':''}" onclick="setBrand('${esc(b)}')">${esc(b)}</div>`).join('')}</div>`;
   $('q').oninput=e=>{q=e.target.value;list()};
   const dl=daysLeft();
-  const warn=cfg.token&&dl!==null&&dl<=30?`<div class="banner" onclick="go('menu')">${dl<0?'La chiave di collegamento è scaduta.':'La chiave di collegamento scade tra '+dl+' giorni.'} Tocca qui per rinnovarla.</div>`:'';
+  const warn=cfg.token&&dl!==null&&dl<=30?`<div class="banner" onclick="go('menu')">${dl<0?'La chiave di collegamento è scaduta.':'La chiave di collegamento scade tra '+dl+' giorni.'} Tocca qui per rinnovarla. Ricorda anche la chiave di Koalendario (archivio koalendario-data), che scade lo stesso giorno.</div>`:'';
   app.innerHTML=warn+'<div id="lst"></div><button class="p fab" onclick="newMotor()">+ Motore</button>';
   list();
 }
