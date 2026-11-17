@@ -127,7 +127,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',REPO_S='andreaguiotto02-8/motorhub-condiviso',APPV='3.2';
+const REPO='andreaguiotto02-8/motorhub-data',REPO_S='andreaguiotto02-8/motorhub-condiviso',APPV='3.3';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -246,7 +246,8 @@ async function pdfText(f){
   return {text:out,pages:doc.numPages,chars};
 }
 async function uploadPdf(id,f){
-  if(!cfg.personal)return submitShared(id,f);
+  if(cfg.sharedToken){const ok=await submitShared(id,f,cfg.personal);if(ok||!cfg.personal)return}
+  else if(!cfg.personal)return submitShared(id,f);
   if(!cfg.token)return;
   try{
     if(f.size<=1500000){await ghPut('pdf/'+id+'.pdf',await fileB64(f),'PDF '+id);toast('PDF inviato per la lettura automatica');return}
@@ -645,10 +646,11 @@ async function ghPutS(path,b64,msg){
   throw new Error('GitHub '+r.status);
 }
 const utf64=t=>btoa(unescape(encodeURIComponent(t)));
-async function submitShared(id,f){
-  if(!cfg.sharedToken){toast('PDF salvato solo sul tuo telefono (app non collegata)');return}
-  const m=motors.find(x=>x.id===id);if(!m)return;
+async function submitShared(id,f,auto){
+  if(!cfg.sharedToken){toast('PDF salvato solo sul tuo telefono (app non collegata)');return false}
+  const m=motors.find(x=>x.id===id);if(!m)return false;
   try{
+    if(!cfg.who&&auto)cfg.who='Andrea';
     if(!cfg.who){cfg.who=(prompt('Come ti chiami? (così chi riceve il manuale sa da chi arriva)')||'').trim();await saveCfg()}
     toast('Leggo il testo del PDF…');
     const r=await pdfText(f);
@@ -656,8 +658,10 @@ async function submitShared(id,f){
     const sid=m.id;
     await ghPutS('submissions/'+sid+'.json',utf64(JSON.stringify({id:sid,brand:m.brand,model:m.model,from:cfg.who||'',pages:r.pages,text:r.text})),'Manuale '+m.brand+' '+m.model);
     await ghPutS('submissions/'+sid+'.meta.json',utf64(JSON.stringify({id:sid,brand:m.brand,model:m.model,from:cfg.who||'',pages:r.pages,t:new Date().toISOString()})),'Info manuale '+sid);
-    toast('PDF inviato. Le procedure arriveranno dopo l\'approvazione');
-  }catch(e){log('error','condiviso: '+e.message);toast('PDF non inviato: '+(e.name==='TimeoutError'?'connessione lenta, riprova':e.message))}
+    if(auto)await ghPutS('status/'+sid+'.json',utf64(JSON.stringify({status:'approved',t:new Date().toISOString()})),'Approvato '+sid);
+    toast(auto?'PDF inviato: le procedure arriveranno a tutti in giornata':'PDF inviato. Le procedure arriveranno dopo l\'approvazione');
+    return true;
+  }catch(e){log('error','condiviso: '+e.message);toast('PDF non inviato: '+(e.name==='TimeoutError'?'connessione lenta, riprova':e.message));return false}
 }
 async function pullShared(){
   if(!cfg.sharedToken)return;
