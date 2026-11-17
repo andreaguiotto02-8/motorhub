@@ -117,7 +117,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='2.3';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='2.4';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -223,23 +223,29 @@ async function pullUpdates(){
     return true;
   }catch(e){log('error','aggiornamento: '+e.message);return false}
 }
+function loadPdfJs(){return new Promise((ok,ko)=>{if(window.pdfjsLib)return ok();const sc=document.createElement('script');sc.src='pdfjs.min.js';sc.onload=()=>{pdfjsLib.GlobalWorkerOptions.workerSrc='pdfjs.worker.min.js';ok()};sc.onerror=()=>ko(new Error('lettore PDF non caricato'));document.head.appendChild(sc)})}
+async function pdfText(f){
+  await loadPdfJs();
+  const doc=await pdfjsLib.getDocument({data:await f.arrayBuffer()}).promise;
+  let out='',chars=0;
+  for(let i=1;i<=doc.numPages;i++){
+    const pg=await doc.getPage(i),tc=await pg.getTextContent();let line='',y=null,t='';
+    for(const it of tc.items){const yy=it.transform[5];if(y!==null&&Math.abs(yy-y)>3){t+=line.trim()+'\n';line=''}line+=it.str+' ';y=yy}
+    t+=line.trim();chars+=t.length;out+='=== Pagina '+i+' ===\n'+t+'\n\n';
+  }
+  return {text:out,pages:doc.numPages,chars};
+}
 async function uploadPdf(id,f){
   if(!cfg.token)return;
   try{
-    const CH=400000;
-    if(f.size<=CH)await ghPut('pdf/'+id+'.pdf',await fileB64(f),'PDF '+id);
-    else{ // file grande: invio a pezzi, poi file indice
-      const n=Math.ceil(f.size/CH);
-      for(let i=0;i<n;i++){
-        toast('Invio PDF '+(i+1)+' di '+n+'…');
-        let ok=false,err;
-        for(let t=0;t<3&&!ok;t++){try{await ghPut('pdfparts/'+id+'/'+String(i+1).padStart(3,'0'),await fileB64(f.slice(i*CH,(i+1)*CH)),'PDF '+id+' parte '+(i+1));ok=true}catch(e){err=e}}
-        if(!ok)throw err;
-      }
-      await ghPut('pdfparts/'+id+'/meta.json',btoa(JSON.stringify({parts:n,size:f.size,name:f.name||'',t:new Date().toISOString()})),'PDF '+id+' completo');
-    }
-    toast('PDF inviato per la lettura automatica')}
-  catch(e){log('error','pdf: '+e.message);toast('PDF non inviato: '+(e.name==='TimeoutError'?'connessione lenta, riprova':e.message))}
+    if(f.size<=1500000){await ghPut('pdf/'+id+'.pdf',await fileB64(f),'PDF '+id);toast('PDF inviato per la lettura automatica');return}
+    toast('Leggo il testo del PDF…');
+    const r=await pdfText(f);
+    if(r.chars<r.pages*80)throw new Error('PDF senza testo selezionabile (scansione)');
+    const utf=btoa(unescape(encodeURIComponent(r.text)));
+    await ghPut('pdftext/'+id+'.txt',utf,'Testo PDF '+id+' ('+r.pages+' pagine)');
+    toast('PDF inviato per la lettura automatica ('+r.pages+' pagine)');
+  }catch(e){log('error','pdf: '+e.message);toast('PDF non inviato: '+(e.name==='TimeoutError'?'connessione lenta, riprova':e.message))}
 }
 function daysLeft(){if(!cfg.expiry)return null;return Math.ceil((new Date(cfg.expiry+'T23:59:59')-new Date())/864e5)}
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
