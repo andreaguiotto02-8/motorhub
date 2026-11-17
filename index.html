@@ -127,7 +127,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',REPO_S='andreaguiotto02-8/motorhub-condiviso',APPV='3.3';
+const REPO='andreaguiotto02-8/motorhub-data',REPO_S='andreaguiotto02-8/motorhub-condiviso',APPV='3.4';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -672,8 +672,9 @@ async function pullShared(){
       if(d&&Array.isArray(d.motors)){
         const k=x=>(x||'').trim().toLowerCase();let ch=false;
         for(const cm of d.motors){
-          let m=motors.find(y=>k(y.brand)===k(cm.brand)&&k(y.model)===k(cm.model));
-          if(!m){m={id:uid(),brand:cm.brand,model:cm.model,type:cm.type||'',notes:'',procs:[],hasPdf:false};motors.push(m);ch=true}
+          let m=motors.find(y=>(cm.key&&y.ck===cm.key)||(cm.src&&y.id===cm.src))||motors.find(y=>!y.ck&&k(y.brand)===k(cm.brand)&&k(y.model)===k(cm.model));
+          if(m&&cm.key&&m.ck!==cm.key){m.ck=cm.key;ch=true}
+          if(!m){m={id:uid(),ck:cm.key||undefined,brand:cm.brand,model:cm.model,type:cm.type||'',notes:'',procs:[],hasPdf:false};motors.push(m);ch=true}
           for(const p of cm.procs||[]){
             const ex=m.procs.find(q=>q.id===p.id);
             if(ex){if(ex.source==='shared'&&JSON.stringify([ex.title,ex.steps])!==JSON.stringify([p.title,p.steps])){ex.title=p.title;ex.steps=p.steps;ch=true}continue}
