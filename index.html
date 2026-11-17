@@ -127,7 +127,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',REPO_S='andreaguiotto02-8/motorhub-condiviso',APPV='3.5';
+const REPO='andreaguiotto02-8/motorhub-data',REPO_S='andreaguiotto02-8/motorhub-condiviso',APPV='3.6',VAPID_PUB='BExWJxTdM5CP78JI06UP1iG3-F9NKVdNJZrRjlzuPNuyNQNDguUwbmalw8X-jER159cPCO_lUhOsSpbmHFL5i90';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -596,7 +596,10 @@ function renderMenu(hd,app){
   <p class="note">Chiave dell'archivio condiviso: serve per ricevere i manuali dei colleghi e per mandare loro le procedure.</p>
   <input id="s_tok" type="password" autocomplete="off" placeholder="${cfg.sharedToken?'Chiave salvata (scrivi per sostituirla)':'Incolla qui la chiave condivisa'}">
   <button class="p" style="width:100%;margin-top:8px" onclick="saveShared()">Salva chiave condivisa</button>
-  ${cfg.sharedToken?`<button style="width:100%;margin-top:10px" onclick="shareLink()">🔗 Manda il link ai colleghi</button>`:''}`:''}
+  ${cfg.sharedToken?`<button style="width:100%;margin-top:10px" onclick="shareLink()">🔗 Manda il link ai colleghi</button>`:''}
+  <h2>Notifiche</h2>
+  <p class="note">Ricevi un avviso quando un collega manda un manuale da approvare (controllo ogni ora).</p>
+  <button class="p" style="width:100%" onclick="enableNotif()">${cfg.pushOn?'🔔 Notifiche attive (tocca per ricollegare)':'🔔 Attiva notifiche'}</button>`:''}
   <h2>Condivisione e aiuto</h2>
   <button class="p" style="width:100%" onclick="go('inbox')">📥 Ricevuti${inbox.length+sharedPending.length?' ('+(inbox.length+sharedPending.length)+')':''}</button>
   <button style="width:100%;margin-top:10px" onclick="go('tutorial',{i:0})">❓ Come si usa</button>
@@ -718,6 +721,21 @@ async function pasteCode(){
   if(!r.ok&&r.status!==404){cfg.sharedToken='';await saveCfg();return toast('Codice non valido')}
   toast('App collegata ai colleghi');await pullShared();render();
 }
+
+const urlB64=b=>{const p='='.repeat((4-b.length%4)%4),r=(b+p).replace(/-/g,'+').replace(/_/g,'/'),raw=atob(r),u=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)u[i]=raw.charCodeAt(i);return u};
+async function enableNotif(){
+  try{
+    if(!('Notification' in window)||!('serviceWorker' in navigator)||!('PushManager' in window))return toast('Questo telefono non supporta le notifiche (su iPhone serve l\'app installata dalla Home)');
+    const perm=await Notification.requestPermission();
+    if(perm!=='granted')return toast('Notifiche non permesse: abilitale dalle impostazioni del telefono');
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(sub){try{await sub.unsubscribe()}catch{}}
+    sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlB64(VAPID_PUB)});
+    await ghPut('push_sub.json',utf64(JSON.stringify(sub.toJSON())),'Notifiche telefono');
+    cfg.pushOn=true;await saveCfg();toast('Notifiche attivate');render();
+  }catch(e){log('error','notifiche: '+e.message);toast('Notifiche non attivate: '+e.message)}
+}
 async function saveShared(){
   const t=$('s_tok').value.trim();if(!t)return toast('Incolla la chiave');
   cfg.sharedToken=t;await saveCfg();
@@ -824,6 +842,7 @@ async function endTut(){cfg.tutDone=true;await saveCfg();go('list')}
   if(hm){cfg.sharedToken=decodeURIComponent(hm[1]);history.replaceState(null,'',location.pathname+location.search);await saveCfg();toast('App collegata ai colleghi')}
   if(cfg.personal===undefined){cfg.personal=!!(cfg.token||Object.keys(hoursData.days||{}).length||payslips.length);await saveCfg()}
   if(!cfg.personal&&!cfg.tutDone)view={name:'tutorial',i:0};
+  if(location.hash==='#inbox'){view={name:'inbox'};history.replaceState(null,'',location.pathname+location.search)}
   log('apertura');
   render();
   if(cfg.token){pullUpdates().then(()=>schedulePush())}
