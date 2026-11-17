@@ -127,7 +127,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',REPO_S='andreaguiotto02-8/motorhub-condiviso',APPV='3.1';
+const REPO='andreaguiotto02-8/motorhub-data',REPO_S='andreaguiotto02-8/motorhub-condiviso',APPV='3.2';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -293,7 +293,8 @@ function renderList(hd,app){
   const dl=daysLeft();
   const warn=cfg.token&&dl!==null&&dl<=30?`<div class="banner" onclick="go('menu')">${dl<0?'La chiave di collegamento è scaduta.':'La chiave di collegamento scade tra '+dl+' giorni.'} Tocca qui per rinnovarla. Ricorda anche la chiave di Koalendario (archivio koalendario-data), che scade lo stesso giorno.</div>`:'';
   const nIn=inbox.length+sharedPending.length;const inb=nIn?`<div class="banner" onclick="go('inbox')">📥 Hai ${nIn} ${nIn===1?'motore ricevuto':'motori ricevuti'}. Tocca per vederli.</div>`:'';
-  app.innerHTML=inb+warn+'<div id="lst"></div><button class="p fab" onclick="newMotor()">+ Motore</button>';
+  const unl=!cfg.personal&&!cfg.sharedToken?`<div class="banner"><b>App non ancora collegata ai colleghi.</b><br>Copia il codice ricevuto su WhatsApp (tienilo premuto → Copia), poi tocca il pulsante.<br><button class="p" style="width:100%;margin-top:10px" onclick="pasteCode()">📋 Incolla il codice</button></div>`:'';
+  app.innerHTML=unl+inb+warn+'<div id="lst"></div><button class="p fab" onclick="newMotor()">+ Motore</button>';
   list();
 }
 function list(){
@@ -699,6 +700,18 @@ async function decideShared(id,ok){
     toast(ok?'Ok: le procedure verranno ricavate':'Scartato');render();
   }catch(e){toast('Non riuscito: '+e.message)}
 }
+
+async function pasteCode(){
+  let t='';
+  try{t=await navigator.clipboard.readText()}catch{}
+  let m=(t||'').match(/github_pat_[A-Za-z0-9_]+/);
+  if(!m){t=prompt('Incolla qui il codice ricevuto su WhatsApp')||'';m=t.match(/github_pat_[A-Za-z0-9_]+/)}
+  if(!m)return toast('Codice non trovato: copialo di nuovo dal messaggio');
+  cfg.sharedToken=m[0];await saveCfg();
+  const r=await ghS('catalog.json?t='+Date.now());
+  if(!r.ok&&r.status!==404){cfg.sharedToken='';await saveCfg();return toast('Codice non valido')}
+  toast('App collegata ai colleghi');await pullShared();render();
+}
 async function saveShared(){
   const t=$('s_tok').value.trim();if(!t)return toast('Incolla la chiave');
   cfg.sharedToken=t;await saveCfg();
@@ -708,8 +721,8 @@ async function saveShared(){
 }
 async function shareLink(){
   const url=location.origin+location.pathname+'#k='+encodeURIComponent(cfg.sharedToken);
-  const text='Ciao! Questa è l\'app MotorHub per le procedure dei motori. Tocca il link per aprirla già pronta:';
-  try{if(navigator.share)await navigator.share({text,url});else{await navigator.clipboard.writeText(text+' '+url);toast('Link copiato: incollalo su WhatsApp')}}catch(e){}
+  const text='Ciao! Questa è l\'app MotorHub per le procedure dei motori.\n\nANDROID: tocca il link, poi installa l\'app.\nIPHONE: apri il link con Safari, tocca Condividi → Aggiungi alla schermata Home. Poi copia il codice qui sotto (tienilo premuto → Copia), apri l\'app dalla Home e tocca "Incolla il codice".\n\nCodice:\n'+cfg.sharedToken+'\n\nLink:';
+  try{if(navigator.share)await navigator.share({text:text+' '+url});else{await navigator.clipboard.writeText(text+' '+url);toast('Messaggio copiato: incollalo su WhatsApp')}}catch(e){}
 }
 
 // ---- Condivisione tra colleghi e tutorial ----
