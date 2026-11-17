@@ -127,7 +127,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='2.7';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='3.0';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -140,7 +140,7 @@ const saveNotes=async()=>{await dbSet('notes',notes);schedulePush()};
 const saveSlips=async()=>{await dbSet('payslips',payslips);schedulePush()};
 const saveReports=async()=>{await dbSet('reports',reports);schedulePush()};
 const saveHours=async()=>{await dbSet('hours',hoursData);schedulePush()};
-const tabs=a=>`<div class="chips" style="margin-top:6px"><div class="chip ${a==='list'?'on':''}" onclick="go('list')">Motori</div><div class="chip ${a==='hours'?'on':''}" onclick="go('hours')">Orari</div><div class="chip ${a==='slips'?'on':''}" onclick="go('slips')">Buste</div><div class="chip ${a==='notes'?'on':''}" onclick="go('notes')">Note</div></div>`;
+const tabs=a=>`<div class="chips" style="margin-top:6px"><div class="chip ${a==='list'?'on':''}" onclick="go('list')">Motori</div>${cfg.personal?`<div class="chip ${a==='hours'?'on':''}" onclick="go('hours')">Orari</div><div class="chip ${a==='slips'?'on':''}" onclick="go('slips')">Buste</div>`:''}<div class="chip ${a==='notes'?'on':''}" onclick="go('notes')">Note</div></div>`;
 const today=()=>new Date(Date.now()-new Date().getTimezoneOffset()*6e4).toISOString().slice(0,10);
 const toMin=t=>{if(!t)return 0;const [h,m]=t.split(':').map(Number);return h*60+m};
 const dayMin=d=>d&&d.in&&d.out?Math.max(0,toMin(d.out)-toMin(d.in)-(+d.lunch||0)):0;
@@ -266,6 +266,9 @@ const $=id=>document.getElementById(id);
 // ---------- Schermate ----------
 function render(){
   const hd=$('hd'),app=$('app');
+  if(!cfg.personal&&['hours','slips','slip','addSlip'].includes(view.name))view={name:'list'};
+  if(view.name==='inbox') return renderInbox(hd,app);
+  if(view.name==='tutorial') return renderTutorial(hd,app);
   if(view.name==='list') return renderList(hd,app);
   if(view.name==='motor') return renderMotor(hd,app);
   if(view.name==='editMotor') return renderEditMotor(hd,app);
@@ -288,7 +291,8 @@ function renderList(hd,app){
   $('q').oninput=e=>{q=e.target.value;list()};
   const dl=daysLeft();
   const warn=cfg.token&&dl!==null&&dl<=30?`<div class="banner" onclick="go('menu')">${dl<0?'La chiave di collegamento è scaduta.':'La chiave di collegamento scade tra '+dl+' giorni.'} Tocca qui per rinnovarla. Ricorda anche la chiave di Koalendario (archivio koalendario-data), che scade lo stesso giorno.</div>`:'';
-  app.innerHTML=warn+'<div id="lst"></div><button class="p fab" onclick="newMotor()">+ Motore</button>';
+  const inb=inbox.length?`<div class="banner" onclick="go('inbox')">📥 Hai ${inbox.length} ${inbox.length===1?'motore ricevuto':'motori ricevuti'}. Tocca per vederli.</div>`:'';
+  app.innerHTML=inb+warn+'<div id="lst"></div><button class="p fab" onclick="newMotor()">+ Motore</button>';
   list();
 }
 function list(){
@@ -320,6 +324,7 @@ function renderMotor(hd,app){
     ${m.hasPdf?'<button class="p" onclick="openPdf()">📄 Apri PDF</button>':''}
     <button onclick="pickPdf()">${m.hasPdf?'Cambia PDF':'📎 Allega PDF'}</button>
     <button onclick="go('editMotor',{id:'${m.id}'})">Modifica</button>
+    <button onclick="shareMotor('${m.id}')">📤 Invia</button>
   </div>
   <input type="file" id="pdfIn" accept="application/pdf" hidden>
   ${favs.length?`<h2>★ Preferite</h2>${favs.map(procH).join('')}<h2>Altre procedure (${rest.length})</h2>`:`<h2>Procedure (${m.procs.length})</h2>`}
@@ -572,7 +577,7 @@ async function saveReport(){
 function renderMenu(hd,app){
   hd.innerHTML=`<div class="top"><button class="back" onclick="go('list')">‹ Indietro</button><h1 style="text-align:right">Menu</h1></div>`;
   const dl=daysLeft(),stt=cfg.status;
-  app.innerHTML=`<h2>Collegamento automatico</h2>
+  app.innerHTML=`${cfg.personal?`<h2>Collegamento automatico</h2>
   <p class="note">Invia i PDF e i dati al deposito privato, da cui il controllo automatico ricava le procedure e migliora l'app.</p>
   <label>Chiave di accesso</label><input id="c_tok" type="password" autocomplete="off" placeholder="${cfg.token?'Chiave salvata (scrivi per sostituirla)':'Incolla qui la chiave'}">
   <label>Scadenza della chiave</label><input id="c_exp" type="date" value="${esc(cfg.expiry)}">
@@ -583,7 +588,10 @@ function renderMenu(hd,app){
   ${stt?`<div class="banner ${stt.problems&&stt.problems.length?'':'ok'}"><b>Ultimo controllo automatico${stt.lastRun?' ('+new Date(stt.lastRun).toLocaleDateString('it-IT')+')':''}</b><br>${esc(stt.summary||'')}${(stt.problems||[]).map(x=>'<br>⚠ '+esc(x)).join('')}</div>`:''}
   <h2>Segnalazioni</h2>
   ${[...reports].sort((a,b)=>b.t.localeCompare(a.t)).slice(0,8).map(r=>`<div class="banner ${r.status==='risolta'?'ok':''}"><b>${r.status==='risolta'?'Risolta':r.status==='aperta'?'In attesa':esc(r.status)}</b> · ${esc(r.note)}${r.reply?'<br>'+esc(r.reply):''}</div>`).join('')||'<p class="note">Nessuna segnalazione.</p>'}
-  <button style="width:100%" onclick="reportCtx('Generale (app)')">⚠ Segnala un problema dell'app</button>
+  <button style="width:100%" onclick="reportCtx('Generale (app)')">⚠ Segnala un problema dell'app</button>`:''}
+  <h2>Condivisione e aiuto</h2>
+  <button class="p" style="width:100%" onclick="go('inbox')">📥 Ricevuti${inbox.length?' ('+inbox.length+')':''}</button>
+  <button style="width:100%;margin-top:10px" onclick="go('tutorial',{i:0})">❓ Come si usa</button>
   <h2>Copia di sicurezza</h2>
   <p class="note">Salva motori, procedure, orari e note in un file. I PDF non sono inclusi.</p>
   <button class="p" style="width:100%" onclick="exportData()">Esporta dati</button>
@@ -613,6 +621,86 @@ function exportData(){
 }
 
 // ---------- Avvio e aggiornamento automatico ----------
+// ---- Condivisione tra colleghi e tutorial ----
+let inbox=[];
+const saveInbox=()=>dbSet('inbox',inbox);
+const b64Blob=(b64,type)=>{const bin=atob(b64),u=new Uint8Array(bin.length);for(let i=0;i<bin.length;i++)u[i]=bin.charCodeAt(i);return new Blob([u],{type})};
+async function shareMotor(id){
+  const m=motors.find(x=>x.id===id);if(!m)return;
+  try{
+    toast('Preparo il file…');
+    const d={app:'motorhub',kind:'motor',v:1,motor:{brand:m.brand,model:m.model,type:m.type||'',notes:m.notes||'',procs:m.procs.map(p=>({title:p.title,steps:p.steps}))}};
+    const pdf=m.hasPdf?await dbGet('pdf:'+m.id):null;
+    if(pdf)d.pdf={name:m.pdfName||'manuale.pdf',b64:await fileB64(pdf)};
+    const name=(m.brand+' '+m.model).replace(/[^\w]+/g,'_')+'.motorhub';
+    const f=new File([JSON.stringify(d)],name,{type:'text/plain'});
+    if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:'MotorHub: '+m.brand+' '+m.model})}
+    else{const a=document.createElement('a');a.href=URL.createObjectURL(f);a.download=name;a.click();toast('File salvato: mandalo con WhatsApp')}
+  }catch(e){if(e&&e.name!=='AbortError'){log('error','invio: '+e.message);toast('Invio non riuscito')}}
+}
+function renderInbox(hd,app){
+  hd.innerHTML=`<div class="top"><button class="back" onclick="go('list')">‹ Indietro</button><h1 style="text-align:right">Ricevuti</h1></div>`;
+  app.innerHTML=`<p class="note">Qui trovi i motori mandati dai colleghi. Non viene salvato niente finché non lo decidi tu.</p>
+  <button class="p" style="width:100%" onclick="$('rcv').click()">📥 Apri file ricevuto</button>
+  <input type="file" id="rcv" hidden multiple>
+  ${inbox.map(x=>`<div class="item" style="margin-top:12px"><div class="m">${esc(x.motor.brand)} ${esc(x.motor.model)}</div>
+    <div class="b">${x.motor.procs.length} procedure · ${x.hasPdf?'con PDF':'senza PDF'}</div>
+    ${x.hasPdf?`<button class="s" style="margin-top:8px" onclick="openInboxPdf('${x.id}')">📄 Guarda il PDF</button>`:''}
+    <div class="row" style="margin-top:10px"><button class="p" onclick="acceptInbox('${x.id}')">Salva</button><button class="d" onclick="dropInbox('${x.id}')">Scarta</button></div></div>`).join('')||'<div class="empty" style="margin:20px 0">Nessun motore ricevuto.</div>'}`;
+  $('rcv').onchange=async e=>{
+    let n=0;
+    for(const f of e.target.files){
+      try{
+        const d=JSON.parse(await f.text());if(d.app!=='motorhub'||d.kind!=='motor'||!d.motor)throw 0;
+        const id=uid();
+        if(d.pdf&&d.pdf.b64)await dbSet('pdf:in:'+id,b64Blob(d.pdf.b64,'application/pdf'));
+        inbox.push({id,t:new Date().toISOString(),motor:d.motor,hasPdf:!!(d.pdf&&d.pdf.b64),pdfName:d.pdf&&d.pdf.name||''});n++;
+      }catch{toast('File non valido: '+f.name)}
+    }
+    if(n){await saveInbox();toast(n+(n===1?' motore ricevuto':' motori ricevuti'))}
+    render();
+  };
+}
+async function openInboxPdf(id){const f=await dbGet('pdf:in:'+id);if(!f)return toast('PDF non trovato');const u=URL.createObjectURL(f);window.open(u,'_blank')||(location.href=u)}
+async function dropInbox(id){
+  if(!confirm('Scartare questo motore? Non verrà salvato.'))return;
+  inbox=inbox.filter(x=>x.id!==id);await dbDel('pdf:in:'+id);await saveInbox();render();
+}
+async function acceptInbox(id){
+  const x=inbox.find(i=>i.id===id);if(!x)return;
+  const k=s=>(s||'').trim().toLowerCase();
+  let m=motors.find(y=>k(y.brand)===k(x.motor.brand)&&k(y.model)===k(x.motor.model));
+  const isNew=!m;
+  if(!m){m={id:uid(),brand:x.motor.brand,model:x.motor.model,type:x.motor.type||'',notes:x.motor.notes||'',procs:[],hasPdf:false};motors.push(m)}
+  let added=0;
+  for(const p of x.motor.procs||[]){
+    if(m.procs.some(q=>k(q.title)===k(p.title)))continue;
+    m.procs.push({id:uid(),title:p.title,steps:p.steps});added++;
+  }
+  const pdf=x.hasPdf?await dbGet('pdf:in:'+id):null;
+  if(pdf&&!m.hasPdf){await dbSet('pdf:'+m.id,pdf);m.hasPdf=true;m.pdfName=x.pdfName;uploadPdf(m.id,pdf)}
+  inbox=inbox.filter(i=>i.id!==id);await dbDel('pdf:in:'+id);await saveInbox();await save();
+  toast(isNew?'Motore salvato':added+' procedure aggiunte');render();
+}
+const TUT=[
+ ['🔧','Benvenuto in MotorHub','Qui tieni le procedure per impostare i motori tubolari (Nice, Somfy…) e le trovi in pochi secondi, anche in cantiere.'],
+ ['➕','1. Aggiungi un motore','Nella scheda Motori tocca "+ Motore" in basso. Scrivi marca e modello (per esempio Nice, E MAT MT 4012) e salva.'],
+ ['📎','2. Allega il manuale','Apri il motore e tocca "Allega PDF" per tenere sempre con te il manuale. Con "Apri PDF" lo leggi quando vuoi.'],
+ ['📋','3. Scrivi le procedure','Nel motore tocca "+ Procedura": un titolo e un passo per riga. Per ritrovarle in fretta usa la ricerca in alto.'],
+ ['★','4. Preferiti','Tocca la stellina a destra di una procedura: finisce in cima al motore, sempre pronta.'],
+ ['📝','5. Note','Nella scheda Note scrivi appunti di lavoro: un titolo e il testo. Ogni nota ha il suo riquadro.'],
+ ['📤','6. Condividi con i colleghi','Nel motore tocca "Invia" e scegli WhatsApp: parte un file con motore, procedure e PDF. Chi lo riceve lo apre da Menu → Ricevuti e decide se salvarlo.'],
+ ['✅','Fatto!','Puoi rivedere questa guida quando vuoi da ⋯ → Come si usa. Buon lavoro!']
+];
+function renderTutorial(hd,app){
+  const i=Math.max(0,Math.min(view.i||0,TUT.length-1)),t=TUT[i],last=i===TUT.length-1;
+  hd.innerHTML=`<div class="top"><h1>Motor<b>Hub</b></h1><button class="s" onclick="endTut()">Salta</button></div>`;
+  app.innerHTML=`<div class="item" style="text-align:center;padding:30px 18px;margin-top:20px"><div style="font-size:56px">${t[0]}</div><div class="m" style="font-size:20px;margin:14px 0 8px">${esc(t[1])}</div><div style="font-size:17px;line-height:1.4">${esc(t[2])}</div></div>
+  <div style="text-align:center;margin:16px 0;color:var(--mut)">${TUT.map((_,k)=>k===i?'●':'○').join(' ')}</div>
+  <div class="row">${i>0?`<button onclick="go('tutorial',{i:${i-1}})">‹ Indietro</button>`:''}<button class="p" onclick="${last?'endTut()':`go('tutorial',{i:${i+1}})`}">${last?'Inizia':'Avanti ›'}</button></div>`;
+}
+async function endTut(){cfg.tutDone=true;await saveCfg();go('list')}
+
 (async()=>{
   motors=(await dbGet('motors'))||[];
   cfg={...cfg,...((await dbGet('cfg'))||{})};
@@ -620,6 +708,9 @@ function exportData(){
   notes=(await dbGet('notes'))||[];
   payslips=(await dbGet('payslips'))||[];slipData=(await dbGet('slipData'))||{};reports=(await dbGet('reports'))||[];
   hoursData={...hoursData,...((await dbGet('hours'))||{})};
+  inbox=(await dbGet('inbox'))||[];
+  if(cfg.personal===undefined){cfg.personal=!!(cfg.token||Object.keys(hoursData.days||{}).length||payslips.length);await saveCfg()}
+  if(!cfg.personal&&!cfg.tutDone)view={name:'tutorial',i:0};
   log('apertura');
   render();
   if(cfg.token){pullUpdates().then(()=>schedulePush())}
