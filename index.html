@@ -41,7 +41,13 @@ main{padding:12px 14px}
 .proc summary:after{content:"▾";float:right;color:var(--mut)}
 .proc[open] summary:after{content:"▴"}
 .proc ol{margin:0;padding:0 14px 6px 38px}
-.proc li{padding:6px 0;border-top:1px solid #232a33}
+.proc ol{counter-reset:st;list-style:none;margin:0;padding:0 14px 8px}
+.proc li{counter-increment:st;position:relative;padding:10px 0 10px 40px;font-size:17px;line-height:1.35;border-top:1px solid #232a33}
+.proc li:before{content:counter(st);position:absolute;left:0;top:10px;width:28px;height:28px;border-radius:50%;background:var(--card2);color:var(--acc);font-weight:700;font-size:15px;display:flex;align-items:center;justify-content:center}
+.k{display:inline-block;min-width:22px;text-align:center;border-radius:6px;padding:0 4px;font-weight:700;background:var(--card2)}
+.k.u{color:#4ade80}.k.n{color:#fbbf24}.k.d{color:#f87171}
+.proc .act{padding:6px 14px 12px}
+.srch{width:100%;margin:8px 0 12px}
 .proc .act{display:flex;gap:8px;padding:8px 14px 14px}
 .row{display:flex;gap:8px}
 .row>*{flex:1}
@@ -117,7 +123,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='2.4';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='2.5';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -294,6 +300,9 @@ function setBrand(b){brandF=b;render()}
 function go(n,extra={}){view={name:n,...extra};render();scrollTo(0,0)}
 function openMotor(id){go('motor',{id})}
 
+const stepH=t=>esc(t).replace(/▲/g,'<span class="k u">▲</span>').replace(/■/g,'<span class="k n">■</span>').replace(/▼/g,'<span class="k d">▼</span>');
+function filterProcs(q){q=q.trim().toLowerCase();document.querySelectorAll('.proc').forEach(d=>{d.style.display=!q||d.dataset.t.includes(q)?'':'none'})}
+function oneOpen(el){if(el.open)document.querySelectorAll('.proc[open]').forEach(d=>{if(d!==el)d.open=false})}
 function renderMotor(hd,app){
   const m=motors.find(x=>x.id===view.id);if(!m)return go('list');
   hd.innerHTML=`<div class="top"><button class="back" onclick="go('list')">‹ Indietro</button><h1 style="text-align:right">${esc(m.model)}</h1></div>`;
@@ -305,8 +314,9 @@ function renderMotor(hd,app){
     <button onclick="go('editMotor',{id:'${m.id}'})">Modifica</button>
   </div>
   <input type="file" id="pdfIn" accept="application/pdf" hidden>
-  <h2>Procedure</h2>
-  ${m.procs.map(p=>`<details class="proc"><summary>${esc(p.title)}${p.source==='pdf'?' <span class="tag pdf">dal PDF</span>':''}</summary><ol>${p.steps.map(s=>`<li>${esc(s)}</li>`).join('')}</ol>
+  <h2>Procedure (${m.procs.length})</h2>
+  ${m.procs.length>6?'<input class="srch" type="search" placeholder="Cerca una procedura…" oninput="filterProcs(this.value)">':''}
+  ${m.procs.map(p=>`<details class="proc" data-t="${esc(p.title.toLowerCase())}" ontoggle="oneOpen(this)"><summary>${esc(p.title)}</summary><ol>${p.steps.map(s=>`<li>${stepH(s)}</li>`).join('')}</ol>
     <div class="act"><button class="s" onclick="go('editProc',{id:'${m.id}',pid:'${p.id}'})">Modifica</button><button class="s d" onclick="delProc('${p.id}')">Elimina</button><button class="s" onclick="reportProc('${p.id}')">⚠ Segnala errore</button></div></details>`).join('')||'<div class="empty" style="margin:20px 0">Nessuna procedura ancora.</div>'}
   <button class="p fab" onclick="go('editProc',{id:'${m.id}',pid:null})">+ Procedura</button>`;
   $('pdfIn').onchange=async e=>{const f=e.target.files[0];if(!f)return;await dbSet('pdf:'+m.id,f);m.hasPdf=true;m.pdfName=f.name;await save();toast('PDF salvato');render();uploadPdf(m.id,f)};
