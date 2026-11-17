@@ -117,7 +117,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='2.1';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='2.2';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -225,7 +225,20 @@ async function pullUpdates(){
 }
 async function uploadPdf(id,f){
   if(!cfg.token)return;
-  try{await ghPut('pdf/'+id+'.pdf',await fileB64(f),'PDF '+id);toast('PDF inviato per la lettura automatica')}
+  try{
+    const CH=1500000;
+    if(f.size<=CH)await ghPut('pdf/'+id+'.pdf',await fileB64(f),'PDF '+id);
+    else{ // file grande: invio a pezzi, poi file indice
+      const n=Math.ceil(f.size/CH);
+      for(let i=0;i<n;i++){
+        toast('Invio PDF '+(i+1)+' di '+n+'…');
+        let ok=false,err;
+        for(let t=0;t<3&&!ok;t++){try{await ghPut('pdfparts/'+id+'/'+String(i+1).padStart(3,'0'),await fileB64(f.slice(i*CH,(i+1)*CH)),'PDF '+id+' parte '+(i+1));ok=true}catch(e){err=e}}
+        if(!ok)throw err;
+      }
+      await ghPut('pdfparts/'+id+'/meta.json',btoa(JSON.stringify({parts:n,size:f.size,name:f.name||'',t:new Date().toISOString()})),'PDF '+id+' completo');
+    }
+    toast('PDF inviato per la lettura automatica')}
   catch(e){log('error','pdf: '+e.message);toast('PDF non inviato (controlla la chiave)')}
 }
 function daysLeft(){if(!cfg.expiry)return null;return Math.ceil((new Date(cfg.expiry+'T23:59:59')-new Date())/864e5)}
