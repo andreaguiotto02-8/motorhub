@@ -48,6 +48,7 @@ main{padding:12px 14px}
 .k.u{color:#4ade80}.k.n{color:#fbbf24}.k.d{color:#f87171}
 .proc .act{padding:6px 14px 12px}
 .srch{width:100%;margin:8px 0 12px}
+.star{font-size:22px;color:#fbbf24;margin-right:10px;padding:4px 6px 4px 0;vertical-align:-2px}
 .proc .act{display:flex;gap:8px;padding:8px 14px 14px}
 .row{display:flex;gap:8px}
 .row>*{flex:1}
@@ -123,7 +124,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='2.5';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='2.6';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -303,8 +304,12 @@ function openMotor(id){go('motor',{id})}
 const stepH=t=>esc(t).replace(/▲/g,'<span class="k u">▲</span>').replace(/■/g,'<span class="k n">■</span>').replace(/▼/g,'<span class="k d">▼</span>');
 function filterProcs(q){q=q.trim().toLowerCase();document.querySelectorAll('.proc').forEach(d=>{d.style.display=!q||d.dataset.t.includes(q)?'':'none'})}
 function oneOpen(el){if(el.open)document.querySelectorAll('.proc[open]').forEach(d=>{if(d!==el)d.open=false})}
+async function toggleFav(pid){const m=motors.find(x=>x.id===view.id),p=m&&m.procs.find(x=>x.id===pid);if(!p)return;p.fav=!p.fav;await save();render()}
 function renderMotor(hd,app){
   const m=motors.find(x=>x.id===view.id);if(!m)return go('list');
+  const favs=m.procs.filter(p=>p.fav),rest=m.procs.filter(p=>!p.fav);
+  const procH=p=>`<details class="proc" data-t="${esc(p.title.toLowerCase())}" ontoggle="oneOpen(this)"><summary><span class="star" onclick="event.preventDefault();event.stopPropagation();toggleFav('${p.id}')">${p.fav?'★':'☆'}</span>${esc(p.title)}</summary><ol>${p.steps.map(s=>`<li>${stepH(s)}</li>`).join('')}</ol>
+    <div class="act"><button class="s" onclick="go('editProc',{id:'${m.id}',pid:'${p.id}'})">Modifica</button><button class="s d" onclick="delProc('${p.id}')">Elimina</button><button class="s" onclick="reportProc('${p.id}')">⚠ Segnala errore</button></div></details>`;
   hd.innerHTML=`<div class="top"><button class="back" onclick="go('list')">‹ Indietro</button><h1 style="text-align:right">${esc(m.model)}</h1></div>`;
   app.innerHTML=`<div class="b" style="color:var(--mut)">${esc(m.brand)}${m.type?' · '+esc(m.type):''}</div>
   ${m.notes?`<p class="note">${esc(m.notes)}</p>`:''}
@@ -314,10 +319,9 @@ function renderMotor(hd,app){
     <button onclick="go('editMotor',{id:'${m.id}'})">Modifica</button>
   </div>
   <input type="file" id="pdfIn" accept="application/pdf" hidden>
-  <h2>Procedure (${m.procs.length})</h2>
+  ${favs.length?`<h2>★ Preferite</h2>${favs.map(procH).join('')}<h2>Altre procedure (${rest.length})</h2>`:`<h2>Procedure (${m.procs.length})</h2>`}
   ${m.procs.length>6?'<input class="srch" type="search" placeholder="Cerca una procedura…" oninput="filterProcs(this.value)">':''}
-  ${m.procs.map(p=>`<details class="proc" data-t="${esc(p.title.toLowerCase())}" ontoggle="oneOpen(this)"><summary>${esc(p.title)}</summary><ol>${p.steps.map(s=>`<li>${stepH(s)}</li>`).join('')}</ol>
-    <div class="act"><button class="s" onclick="go('editProc',{id:'${m.id}',pid:'${p.id}'})">Modifica</button><button class="s d" onclick="delProc('${p.id}')">Elimina</button><button class="s" onclick="reportProc('${p.id}')">⚠ Segnala errore</button></div></details>`).join('')||'<div class="empty" style="margin:20px 0">Nessuna procedura ancora.</div>'}
+  ${rest.map(procH).join('')||(favs.length?'':'<div class="empty" style="margin:20px 0">Nessuna procedura ancora.</div>')}
   <button class="p fab" onclick="go('editProc',{id:'${m.id}',pid:null})">+ Procedura</button>`;
   $('pdfIn').onchange=async e=>{const f=e.target.files[0];if(!f)return;await dbSet('pdf:'+m.id,f);m.hasPdf=true;m.pdfName=f.name;await save();toast('PDF salvato');render();uploadPdf(m.id,f)};
 }
