@@ -117,7 +117,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',APPV='2.2';
+const REPO='andreaguiotto02-8/motorhub-data',APPV='2.3';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -166,7 +166,7 @@ addEventListener('error',e=>log('error',String(e.message||e).slice(0,200)));
 addEventListener('unhandledrejection',e=>log('error',String(e.reason).slice(0,200)));
 
 // ---------- Collegamento con GitHub (deposito privato) ----------
-const gh=(path,opt={})=>fetch(`https://api.github.com/repos/${REPO}/contents/${path}`,{...opt,headers:{Authorization:'Bearer '+cfg.token,Accept:'application/vnd.github+json',...(opt.headers||{})}});
+const gh=(path,opt={})=>fetch(`https://api.github.com/repos/${REPO}/contents/${path}`,{signal:AbortSignal.timeout(60000),...opt,headers:{Authorization:'Bearer '+cfg.token,Accept:'application/vnd.github+json',...(opt.headers||{})}});
 async function ghPut(path,b64,msg){
   let r;
   for(let i=0;i<3;i++){
@@ -226,7 +226,7 @@ async function pullUpdates(){
 async function uploadPdf(id,f){
   if(!cfg.token)return;
   try{
-    const CH=1500000;
+    const CH=400000;
     if(f.size<=CH)await ghPut('pdf/'+id+'.pdf',await fileB64(f),'PDF '+id);
     else{ // file grande: invio a pezzi, poi file indice
       const n=Math.ceil(f.size/CH);
@@ -239,7 +239,7 @@ async function uploadPdf(id,f){
       await ghPut('pdfparts/'+id+'/meta.json',btoa(JSON.stringify({parts:n,size:f.size,name:f.name||'',t:new Date().toISOString()})),'PDF '+id+' completo');
     }
     toast('PDF inviato per la lettura automatica')}
-  catch(e){log('error','pdf: '+e.message);toast('PDF non inviato (controlla la chiave)')}
+  catch(e){log('error','pdf: '+e.message);toast('PDF non inviato: '+(e.name==='TimeoutError'?'connessione lenta, riprova':e.message))}
 }
 function daysLeft(){if(!cfg.expiry)return null;return Math.ceil((new Date(cfg.expiry+'T23:59:59')-new Date())/864e5)}
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,6);
