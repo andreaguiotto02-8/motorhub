@@ -127,7 +127,7 @@ let view={name:'list'};   // list | motor | editMotor | editProc | menu
 let q='',brandF='';
 let cfg={token:'',expiry:'',status:null,lastSync:''};  // chiave, scadenza chiave, esito controllo automatico
 let usage=[];                                         // registro d'uso (ultimi 300 eventi)
-const REPO='andreaguiotto02-8/motorhub-data',REPO_S='andreaguiotto02-8/motorhub-condiviso',APPV='3.4';
+const REPO='andreaguiotto02-8/motorhub-data',REPO_S='andreaguiotto02-8/motorhub-condiviso',APPV='3.5';
 
 const save=async()=>{await dbSet('motors',motors);schedulePush()};
 const saveCfg=()=>dbSet('cfg',cfg);
@@ -672,6 +672,7 @@ async function pullShared(){
       if(d&&Array.isArray(d.motors)){
         const k=x=>(x||'').trim().toLowerCase();let ch=false;
         for(const cm of d.motors){
+          cm.key=cm.key||(k(cm.brand)+'-'+k(cm.model)).replace(/[^a-z0-9]+/g,'-');
           let m=motors.find(y=>(cm.key&&y.ck===cm.key)||(cm.src&&y.id===cm.src))||motors.find(y=>!y.ck&&k(y.brand)===k(cm.brand)&&k(y.model)===k(cm.model));
           if(m&&cm.key&&m.ck!==cm.key){m.ck=cm.key;ch=true}
           if(!m){m={id:uid(),ck:cm.key||undefined,brand:cm.brand,model:cm.model,type:cm.type||'',notes:'',procs:[],hasPdf:false};motors.push(m);ch=true}
